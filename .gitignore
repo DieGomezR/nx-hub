@@ -1,0 +1,9 @@
+.build/
+.dev/
+.signing/
+NX Hub.app/
+.swiftpm/
+*.xcodeproj/
+*.tar
+.DS_Store
+Resources/AppIcon.png

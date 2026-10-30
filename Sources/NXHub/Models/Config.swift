@@ -31,6 +31,13 @@ final class Config {
     var showHints: Bool { didSet { d.set(showHints, forKey: "showHints") } }
     var startFullScreen: Bool { didSet { d.set(startFullScreen, forKey: "startFullScreen") } }
     var backupBeforePlay: Bool { didSet { d.set(backupBeforePlay, forKey: "backupBeforePlay") } }
+    /// A backup of the save, with a picture of that moment, each time a game started from NX Hub saves (its host commits the save); how many of those to keep per game
+    var backupOnGameSave: Bool { didSet { d.set(backupOnGameSave, forKey: "backupOnGameSave") } }
+    var gameSaveBackups: Int { didSet { d.set(gameSaveBackups, forKey: "gameSaveBackups") } }
+    /// nxnative's cloud saves for every game: the folder NX Hub writes into each app's cloudSaves.folder ("" = NX Hub leaves the apps' own choice alone)
+    var cloudSavesFolder: String { didSet { d.set(cloudSavesFolder, forKey: "cloudSavesFolder") } }
+    /// The folder NX Hub last wrote into each app (bundle ID → folder): only those are NX Hub's to change or take out; a folder the player chose in a game's own window stays
+    var cloudSavesWritten: [String: String] { didSet { d.set(cloudSavesWritten, forKey: "cloudSavesWritten") } }
     /// Each game's id on GameBanana (its mods): title ID → id
     var gbGameIDs: [String: Int] { didSet { d.set(gbGameIDs, forKey: "gbGameIDs") } }
     var gbGameNames: [String: String] { didSet { d.set(gbGameNames, forKey: "gbGameNames") } }
@@ -76,6 +83,10 @@ final class Config {
         showHints = d.object(forKey: "showHints") as? Bool ?? true
         startFullScreen = d.bool(forKey: "startFullScreen")
         backupBeforePlay = d.bool(forKey: "backupBeforePlay")
+        backupOnGameSave = d.object(forKey: "backupOnGameSave") as? Bool ?? true
+        gameSaveBackups = d.object(forKey: "gameSaveBackups") as? Int ?? 20
+        cloudSavesFolder = d.string(forKey: "cloudSavesFolder") ?? ""
+        cloudSavesWritten = d.dictionary(forKey: "cloudSavesWritten") as? [String: String] ?? [:]
         gbGameIDs = d.dictionary(forKey: "gbGameIDs") as? [String: Int] ?? [:]
         gbGameNames = d.dictionary(forKey: "gbGameNames") as? [String: String] ?? [:]
         shotMinutes = d.object(forKey: "shotMinutes") as? Int ?? 2

@@ -27,6 +27,10 @@ enum Paths {
     static func modified(_ url: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
+    /// The file number (inode) of a path; nil when it does not exist
+    static func fileNumber(_ url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.systemFileNumber] as? Int
+    }
 }
 
 /// Localized text from the app's Localizable.strings (Spanish and English; the key is the English text)

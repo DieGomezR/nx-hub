@@ -15,6 +15,8 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.22), value: model.page)
         .overlay { if let g = model.closePrompt { ClosePrompt(game: g).transition(.opacity) } }
         .animation(.easeOut(duration: 0.15), value: model.closePrompt?.titleID)
+        .overlay { if let p = model.switchPrompt { SwitchPrompt(plan: p).transition(.opacity) } }
+        .animation(.easeOut(duration: 0.15), value: model.switchPrompt)
         .overlay(alignment: .bottom) { NoticeBanner() }
         .groupBoxStyle(CardGroupBoxStyle())
         .preferredColorScheme(.dark)
@@ -127,6 +129,42 @@ private struct ClosePrompt: View {
             }
             .padding(36)
             .frame(maxWidth: 480)
+            .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.11)))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.stroke))
+            .shadow(color: .black.opacity(0.5), radius: 30)
+        }
+    }
+}
+
+/// Another game while one is suspended at its instant: back to that one, or close it (it keeps what it saved) and open the other
+private struct SwitchPrompt: View {
+    @Environment(AppModel.self) private var model
+    let plan: AppModel.SwitchPlan
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { model.switchPrompt = nil }
+            VStack(spacing: 16) {
+                HStack(spacing: 18) {
+                    GameTileArt(game: plan.from, size: 84).shadow(radius: 14)
+                    Image(systemName: "arrow.right").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                    GameTileArt(game: plan.to, size: 84).shadow(radius: 14)
+                }
+                Text(LF("%@ is suspended", plan.from.name)).font(.system(size: 24, weight: .bold)).multilineTextAlignment(.center)
+                Text(LF("To open %@, %@ closes first: it goes back to its last save, and the instant you left it at is lost.", plan.to.name, plan.from.name))
+                    .foregroundStyle(Theme.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 14) {
+                    Button { model.switchPrompt = nil } label: { Text("Cancel").frame(minWidth: 96) }.buttonStyle(GlassPill())
+                    Button { model.switchPrompt = nil; Task { await model.closeAndPlay(plan) } } label: { Text(LF("Close and open %@", plan.to.name)).frame(minWidth: 96) }.buttonStyle(GlassPill(tint: Theme.bad))
+                    Button { model.switchPrompt = nil; model.resumeGame() } label: { Text(LF("Back to %@", plan.from.name)).frame(minWidth: 96) }.buttonStyle(PrimaryPill())
+                }
+                .padding(.top, 6)
+                if !model.pads.pads.isEmpty {
+                    HStack(spacing: 18) { Hint(glyph: "A", text: L("Back to the game")); Hint(glyph: "X", text: L("Close and open")); Hint(glyph: "B", text: L("Cancel")) }
+                }
+            }
+            .padding(36)
+            .frame(maxWidth: 560)
             .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.11)))
             .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.stroke))
             .shadow(color: .black.opacity(0.5), radius: 30)

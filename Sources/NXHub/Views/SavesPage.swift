@@ -10,8 +10,8 @@ struct SavesPage: View {
         PageShell(title: L("Saves"), systemImage: "externaldrive.fill") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Before NX Hub replaces or restores a save it backs up the current one. A save is replaced only while its game is closed.")
-                        .foregroundStyle(Theme.secondary)
+                    Text("Before NX Hub replaces or restores a save it backs up the current one. A save is replaced only while its game is closed. Restoring a backup made when the game saved brings back that save; its picture shows where you were as the game saved.")
+                        .foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                     ForEach(slots) { s in SaveCard(slot: s) }
                     if slots.isEmpty { Text("No saves yet.").foregroundStyle(Theme.secondary) }
                 }
@@ -46,6 +46,7 @@ struct SaveCard: View {
     var body: some View {
         let _ = model.shotStamp
         VStack(alignment: .leading, spacing: 14) {
+            if let s = model.session, s.game.titleID == slot.titleID, s.suspended { SuspendedBanner(session: s) }
             HStack(alignment: .top, spacing: 18) {
                 ShotThumb(image: ShotStore.lastImage(slot.titleID), game: game, width: 256)
                 VStack(alignment: .leading, spacing: 6) {
@@ -55,6 +56,7 @@ struct SaveCard: View {
                     if let d = Paths.modified(ShotStore.last(slot.titleID)) {
                         Label(LF("Picture of where you left it: %@", d.relative), systemImage: "camera.fill").font(.system(size: 12)).foregroundStyle(Theme.secondary)
                     }
+                    if let app = game?.app { CloudLine(app: app, slot: slot) }
                     Text(Paths.pretty(slot.folder)).font(.caption.monospaced()).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                     Spacer(minLength: 6)
                     HStack(spacing: 10) {
@@ -78,7 +80,7 @@ struct SaveCard: View {
                 }
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
-                        ForEach(backups.prefix(40), id: \.self) { b in
+                        ForEach(backups.prefix(120), id: \.self) { b in
                             BackupTile(zip: b, restore: { restoring = b }, trash: { trash(b) })
                         }
                     }
@@ -89,13 +91,17 @@ struct SaveCard: View {
         }
         .card()
         .onAppear { backups = SaveStore.listBackups(slot.titleID) }
+        .onChange(of: model.shotStamp) { refresh() }   // a backup made when the game saved, a pruned one, a new picture
         .sheet(item: $importing) { plan in ImportSheet(plan: plan, slot: slot) { chosen in Task { await finishImport(plan, chosen) } } }
         .confirmationDialog(restoring.map { LF("Restore the backup of %@?", SaveStore.describe($0).date.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? $0.lastPathComponent) } ?? "",
                             isPresented: Binding(get: { restoring != nil }, set: { if !$0 { restoring = nil } })) {
-            Button("Restore") { if let b = restoring { Task { await restore(b) } } }
+            if game?.app != nil {
+                Button(running ? L("Close, Restore and Play") : L("Restore and Play")) { if let b = restoring { Task { await restore(b, play: true) } } }
+            }
+            Button(running ? L("Close and Restore") : L("Restore")) { if let b = restoring { Task { await restore(b, play: false) } } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The current save is backed up first.")
+            Text(running ? LF("%@ closes first: what it has not saved is lost. The current save is backed up before the restore.", slot.name) : L("The current save is backed up first."))
         }
     }
 
@@ -146,12 +152,78 @@ struct SaveCard: View {
         refresh()
     }
 
-    private func restore(_ zip: URL) async {
-        guard !running else { model.notice = LF("Quit %@ before replacing its save.", slot.name); return }
+    /// Restores a backup (the game closes first when it runs, as NX Hub's own Close does), then starts the game when asked: it loads the restored save
+    private func restore(_ zip: URL, play: Bool) async {
+        guard Paths.exists(zip) else { model.notice = L("That backup is gone."); refresh(); return }   // checked before the game is closed for it
         busy = true; defer { busy = false }
-        do { try await SaveStore.restore(slot, from: zip); model.notice = LF("%@: restored %@.", slot.name, zip.deletingPathExtension().lastPathComponent) }
-        catch { model.notice = error.localizedDescription }
+        if running {
+            guard let s = model.session, s.game.titleID == slot.titleID else { model.notice = LF("Quit %@ before replacing its save.", slot.name); return }
+            await model.closeGame()
+            for _ in 0..<60 {   // its launcher syncs the save once the host has quit; the app list may lag behind the processes
+                model.updateRunning()
+                if !s.alive && !running { break }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            guard !s.alive && !running else { model.notice = LF("Quit %@ before replacing its save.", slot.name); return }
+        }
+        do { try await SaveStore.restore(slot, from: zip) }
+        catch { model.notice = error.localizedDescription; refresh(); return }
         refresh()
+        if play, let g = game {
+            model.notice = LF("%@: restored the save of %@; starting the game.", slot.name, SaveStore.describe(zip).date.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? zip.lastPathComponent)
+            await model.play(g)
+        } else {
+            model.notice = LF("%@: restored %@.", slot.name, zip.deletingPathExtension().lastPathComponent)
+        }
+    }
+}
+
+/// The game is suspended at an instant (Home paused it): go back to exactly there, which a backup cannot do
+private struct SuspendedBanner: View {
+    @Environment(AppModel.self) private var model
+    let session: GameSession
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: session.paused ? "pause.circle.fill" : "moon.circle.fill").font(.system(size: 26)).foregroundStyle(Theme.warn)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.paused ? LF("Suspended %@", (session.pausedSince ?? Date()).relative) : L("In the background")).font(.system(size: 14, weight: .semibold))
+                Text("Go back to the game to carry on at the very instant you left it (the picture below). Closing the game or restarting the Mac loses that instant: the game then starts from its last save.")
+                    .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button { model.resumeGame() } label: { Label("Back to the Game", systemImage: "play.fill") }.buttonStyle(PrimaryPill())
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.warn.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.warn.opacity(0.35)))
+    }
+}
+
+/// Where the game's save syncs (nxnative's cloud saves) and when it last did, or why it does not
+private struct CloudLine: View {
+    @Environment(AppModel.self) private var model
+    let app: AppBundle
+    let slot: SaveSlot
+
+    var body: some View {
+        let folder = CloudSaves.effectiveFolder(of: app, launchEnv: model.config.launchEnvironment(slot.titleID))
+        if !folder.isEmpty && CloudSaves.unreachable(folder) {
+            Label("iCloud Drive is off: this game's save does not sync", systemImage: "icloud.slash").font(.system(size: 12)).foregroundStyle(Theme.warn)
+        } else if !folder.isEmpty {
+            HStack(spacing: 8) {
+                Label(CloudSaves.lastSync(slot.titleID, in: folder).map { LF("In the cloud: synced %@", $0.relative) } ?? L("In the cloud: not synced yet (it goes a few seconds after the game saves)"),
+                      systemImage: "icloud.fill")
+                let copies = CloudSaves.hostBackups(slot.folder)
+                if Paths.isDirectory(copies) {
+                    Button("Saves a sync replaced") { NSWorkspace.shared.open(copies) }.buttonStyle(.link)
+                }
+            }
+            .font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            .help(folder)
+        } else if !model.config.cloudSavesFolder.isEmpty && !CloudSaves.supported(app) {
+            Label("This build has no cloud saves: rebuild it to sync its save", systemImage: "icloud.slash").font(.system(size: 12)).foregroundStyle(Theme.warn)
+        }
     }
 }
 

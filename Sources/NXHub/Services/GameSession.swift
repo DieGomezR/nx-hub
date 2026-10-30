@@ -73,11 +73,22 @@ final class GameSession {
     var launcherPID: pid_t = 0         // the app's own process (dm/mac/launcher.c): it runs the host as its child, passes SIGTERM on and syncs the save after it
     var hostPID: pid_t = 0             // the host (Contents/MacOS/dmhost): the game itself, with its window
     var suspended = false              // Home brought NX Hub in front of it
-    var paused = false                 // ... and the game is stopped meanwhile
+    var paused = false                 // ... and the game is stopped meanwhile, at that instant
+    var pausedSince: Date?
     var lastShot: Date?
     @ObservationIgnored var onShot: (() -> Void)?
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var watch: Timer?
+    @ObservationIgnored private var saveWatch: Timer?
+    @ObservationIgnored private var saveMarks: [Int?] = []    // the file numbers of the save and device save folders
+    @ObservationIgnored private var workMark: Int?            // <save>.work's, until the game's first save mount makes a new one
+    @ObservationIgnored private var saveArmed = false
+    @ObservationIgnored private var burstFrom: Date?          // the first commit of a burst not backed up yet
+    @ObservationIgnored private var burstLast: Date?
+    /// When the game last committed its save (nil: not this session)
+    @ObservationIgnored var lastCommitAt: Date?
+    /// A commit is waiting for the burst to end (the session's end backs it up anyway)
+    var savePending: Bool { burstFrom != nil }
     @ObservationIgnored private var shooting = false
 
     init(game: Game, ctl: URL?) { self.game = game; self.ctl = ctl }
@@ -107,7 +118,8 @@ final class GameSession {
         return true
     }
 
-    var alive: Bool { Proc.alive(hostPID) || Proc.alive(launcherPID) }
+    /// The game's processes still run (by the app list while NX Hub has not learnt their IDs: a game opened elsewhere whose launcher window is still up)
+    var alive: Bool { hostPID > 0 || launcherPID > 0 ? Proc.alive(hostPID) || Proc.alive(launcherPID) : !runningApps().isEmpty }
 
     /// A picture every so many minutes while the game is in front
     func startShots(every minutes: Int) {
@@ -132,11 +144,51 @@ final class GameSession {
         }
     }
 
-    func end() {
+    /// Follows the game's save commits. nxnative's host commits by swapping a new clone in for the save folder (dm/host/hle_fs.c: clonefile, then renamex_np
+    /// RENAME_SWAP), so the folder's file number changes with every commit, and with nothing else once the game has mounted its save: before that, a cloud save
+    /// can come in the same way, so watching starts when <save>.work is made anew (the mount follows the cloud's), or at once for a game that already ran.
+    /// `first` is called at the first commit of a burst, `saved` once the folders have stayed the same for 3 s (games often commit several times in a row;
+    /// nxnative's cloud sender waits the same, save_sync.c QUIET_MS), or after a minute of commits. Checked every second while the game is not paused
+    func watchSaves(_ folders: [URL], alreadyRunning: Bool, first: @escaping () -> Void, saved: @escaping () -> Void) {
+        saveWatch?.invalidate()
+        let work = URL(fileURLWithPath: (folders.first?.path ?? "") + ".work")
+        saveMarks = folders.map(Paths.fileNumber)
+        workMark = Paths.fileNumber(work)
+        saveArmed = alreadyRunning
+        burstFrom = nil; burstLast = nil
+        saveWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.paused else { return }
+                let marks = folders.map(Paths.fileNumber)
+                if !self.saveArmed {
+                    let w = Paths.fileNumber(work)
+                    if w != nil, w != self.workMark { self.saveArmed = true; self.saveMarks = marks }
+                    return
+                }
+                let now = Date()
+                if marks != self.saveMarks {
+                    self.saveMarks = marks
+                    self.lastCommitAt = now
+                    if self.burstFrom == nil { self.burstFrom = now; first() }
+                    self.burstLast = now
+                }
+                if let from = self.burstFrom, let last = self.burstLast, now.timeIntervalSince(last) >= 3 || now.timeIntervalSince(from) >= 60 {
+                    self.burstFrom = nil; self.burstLast = nil
+                    saved()
+                }
+            }
+        }
+    }
+
+
+    /// The session is over for NX Hub. A paused game goes on, unless it is kept at its instant (NX Hub quits and the player keeps it suspended)
+    func end(keepPaused: Bool = false) {
         timer?.invalidate(); timer = nil
         watch?.invalidate(); watch = nil
-        if paused, hostPID > 0 { kill(hostPID, SIGCONT) }
-        paused = false; suspended = false
+        saveWatch?.invalidate(); saveWatch = nil
+        burstFrom = nil; burstLast = nil
+        if paused, hostPID > 0, !keepPaused { kill(hostPID, SIGCONT) }
+        if !keepPaused { paused = false; suspended = false; pausedSince = nil }
     }
 
     /// Asks the host for a picture of its next frame and waits until it is written whole; it replaces last.png
@@ -180,6 +232,7 @@ final class GameSession {
     func stop() {
         guard hostPID > 0, !paused, kill(hostPID, SIGSTOP) == 0 else { return }
         paused = true
+        pausedSince = Date()
         DevLog.write("session \(game.titleID): host \(hostPID) stopped")
     }
 
@@ -187,6 +240,7 @@ final class GameSession {
         if hostPID > 0 { kill(hostPID, SIGCONT) }
         if paused { DevLog.write("session \(game.titleID): host \(hostPID) goes on") }
         paused = false
+        pausedSince = nil
     }
 
     /// Back to the game: it goes on and its window comes to the front (NX Hub, the active app, hands activation over: macOS 14's cooperative activation)
@@ -201,6 +255,8 @@ final class GameSession {
 
     /// Closes the game as its own Quit does (the host quits, then its launcher syncs the save and ends); SIGTERM to the launcher when that does not happen
     func close() async {
+        await findProcesses()   // a game opened elsewhere: its IDs, so the waits below wait for it
+        if launcherPID <= 0, let a = runningApps().first(where: { $0.processIdentifier != hostPID }) { launcherPID = a.processIdentifier }
         cont()
         suspended = false
         for a in runningApps() { a.terminate() }
@@ -212,14 +268,10 @@ final class GameSession {
         if launcherPID > 0 { kill(launcherPID, SIGTERM) } else if hostPID > 0 { kill(hostPID, SIGTERM) }
     }
 
-    /// Hosts a previous NX Hub left stopped (it quit or crashed during a pause) go on
-    static func continueStrays() async {
+    /// Hosts stopped by a pause that a previous NX Hub left behind (it quit with the game kept suspended, or crashed during a pause)
+    static func stoppedHosts() async -> [pid_t] {
         let r = await Shell.run("/usr/bin/pgrep", ["-f", "/Contents/MacOS/dmhost"])
-        for s in r.out.split(separator: "\n") {
-            guard let pid = pid_t(s.trimmingCharacters(in: .whitespaces)), Proc.stopped(pid) else { continue }
-            kill(pid, SIGCONT)
-            DevLog.write("stray stopped host \(pid): SIGCONT")
-        }
+        return r.out.split(separator: "\n").compactMap { pid_t($0.trimmingCharacters(in: .whitespaces)) }.filter { Proc.stopped($0) }
     }
 }
 

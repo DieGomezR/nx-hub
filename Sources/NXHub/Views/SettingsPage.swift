@@ -325,8 +325,87 @@ private struct InterfaceSettings: View {
             }
         }
         GroupBox("Saves") {
-            Toggle("Back up a game's save each time it starts from NX Hub", isOn: $config.backupBeforePlay)
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle("Back up a game's save each time it starts from NX Hub", isOn: $config.backupBeforePlay)
+                Toggle("Back up the save, with a picture, each time the game saves", isOn: $config.backupOnGameSave)
+                HStack {
+                    Text("Keep, per game")
+                    Spacer()
+                    Picker("", selection: $config.gameSaveBackups) {
+                        ForEach([10, 20, 50, 100], id: \.self) { n in Text(LF("The last %lld", n)).tag(n) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
+                .disabled(!config.backupOnGameSave).padding(.leading, 20)
+                Text("Restoring one of those backups (Saves) brings back that save, and its picture shows where you were as the game saved. The exact instant you left a game at is kept only while it is suspended: Home pauses it, and it waits there until you go back, close it or restart the Mac.")
+                    .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
+        GroupBox("Cloud saves") { CloudSavesSettings() }
+    }
+}
+
+/// nxnative's cloud saves for every game: one folder in iCloud Drive that each game's app syncs its save through (docs/settings.md, Cloud saves)
+private struct CloudSavesSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var report = AppModel.CloudReport()
+
+    private var on: Bool { !model.config.cloudSavesFolder.isEmpty }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Sync every game's save through iCloud Drive", isOn: Binding(get: { on }, set: { want in
+                if want { use(CloudSaves.defaultFolder.path) } else { model.config.cloudSavesFolder = ""; report = model.applyCloudSaves() }
+            }))
+            .disabled(!on && !CloudSaves.iCloudDriveOn)
+            if on {
+                HStack {
+                    Text(Paths.pretty(Paths.expand(model.config.cloudSavesFolder))).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button("Choose Folder…") { choose() }
+                    Button { NSWorkspace.shared.open(Paths.expand(model.config.cloudSavesFolder)) } label: { Image(systemName: "arrow.up.forward.square") }.buttonStyle(.borderless)
+                }
+                .padding(.leading, 20)
+                if report.iCloudOff {
+                    Label("iCloud Drive is off on this Mac: no game syncs until it is on again (System Settings › your name › iCloud › iCloud Drive).", systemImage: "icloud.slash")
+                        .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                }
+                if !report.tooOld.isEmpty {
+                    Label(LF("Built before nxnative had cloud saves, so they do not sync yet: %@. Rebuilding them brings it.", report.tooOld.map(\.name).joined(separator: ", ")), systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                }
+                if !report.ownChoice.isEmpty {
+                    Label(LF("These keep the folder chosen in their own settings window: %@.", report.ownChoice.map(\.name).joined(separator: ", ")), systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            } else if !CloudSaves.iCloudDriveOn {
+                Text("iCloud Drive is off on this Mac: turn it on in System Settings › your name › iCloud › iCloud Drive.")
+                    .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Each game keeps one file there and syncs a few seconds after it saves; the newest save wins, and each save a sync replaces is kept beside the game's save. Choose the same folder in the iPhone app's Cloud saves to play the same game on both. macOS may ask once whether a game may open iCloud Drive.")
+                .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { if on { report = model.applyCloudSaves() } }
+    }
+
+    private func use(_ chosen: String) {
+        var folder = chosen
+        // A game's own folder (named after its title ID, as the iPhone's picker shows it once a device has synced): every game needs the one above it
+        let last = Paths.expand(folder).lastPathComponent
+        if last.count == 16, last.allSatisfy(\.isHexDigit) { folder = Paths.expand(folder).deletingLastPathComponent().path }
+        guard CloudSaves.prepare(folder) else { model.notice = LF("NX Hub cannot make or open %@.", Paths.pretty(Paths.expand(folder))); return }
+        model.config.cloudSavesFolder = folder
+        report = model.applyCloudSaves()
+        model.notice = folder == chosen ? L("Cloud saves are on: each game syncs from its next start.") : LF("Cloud saves are on, through %@ (the folder that holds every game's): each game syncs from its next start.", Paths.pretty(Paths.expand(folder)))
+    }
+
+    private func choose() {
+        let p = NSOpenPanel()
+        p.canChooseFiles = false; p.canChooseDirectories = true; p.canCreateDirectories = true; p.allowsMultipleSelection = false
+        p.directoryURL = CloudSaves.iCloudDriveOn ? CloudSaves.iCloudDrive : Paths.home
+        p.message = L("Choose the folder every game syncs its save through (the same one as on your iPhone)")
+        guard p.runModal() == .OK, let u = p.url else { return }
+        use(u.path)
     }
 }
 

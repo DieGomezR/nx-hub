@@ -23,18 +23,46 @@ enum DevSnapshot {
                 guard parts.count >= 2 else { return }
                 let w = parts.count > 3 ? Double(parts[2]) ?? 1320 : 1320, h = parts.count > 3 ? Double(parts[3]) ?? 840 : 840
                 if parts[1] == "home-index", parts.count > 2, let i = Int(parts[2]) { model.homeIndex = i; return }
-                // A game session driven from a shell: play <title ID>, home (as the controller's Home button), shot, resume, close
+                // A game session driven from a shell: play <title ID> [KEY=VALUE;KEY=VALUE] (extra environment for this start), home (as the controller's Home button),
+                // shot, resume, close, ctl <line> (a raw line for the game's control file: a key press such as "A" or "Down~0.5"), gshot <name> (the game's next frame
+                // into .dev/<name>.png), build <title ID>, update (the nxnative checkout to origin/main)
+                let line = r.trimmingCharacters(in: .whitespacesAndNewlines)
+                let rest = parts.count > 2 ? String(line.dropFirst(parts[0].count + parts[1].count + 2)) : ""
                 switch parts[1] {
                 case "play":
-                    if parts.count > 2, let g = model.games.first(where: { $0.titleID == parts[2].uppercased() }) { DevLog.write("dev: play \(g.titleID)"); await model.play(g) }
+                    if parts.count > 2, let g = model.games.first(where: { $0.titleID == parts[2].uppercased() }) {
+                        var env: [String: String] = [:]
+                        if parts.count > 3 {
+                            for kv in parts[3...].joined(separator: " ").split(separator: ";") {
+                                if let eq = kv.firstIndex(of: "=") { env[String(kv[..<eq])] = String(kv[kv.index(after: eq)...]) }
+                            }
+                        }
+                        DevLog.write("dev: play \(g.titleID) \(env)")
+                        await model.play(g, extraEnv: env)
+                    }
                     return
+                case "ctl":
+                    let ok = model.session?.ctl.map { GameSession.append(rest, to: $0) } ?? false
+                    DevLog.write("dev: ctl '\(rest)' \(ok)")
+                    return
+                case "gshot":
+                    let name = rest.isEmpty ? "game" : rest
+                    let ok = model.session?.ctl.map { GameSession.append("shot " + dev.appendingPathComponent(name + ".png").path, to: $0) } ?? false
+                    DevLog.write("dev: gshot \(name) \(ok)")
+                    return
+                case "build":
+                    if parts.count > 2, let g = model.games.first(where: { $0.titleID == parts[2].uppercased() }) { DevLog.write("dev: build \(g.titleID)"); model.build(g) }
+                    return
+                case "update":   // the nxnative checkout to origin/main (fetch, then as the Updates page's Update does)
+                    await model.repo.fetch(); let ok = await model.repo.update(); await model.computeChanges()
+                    DevLog.write("dev: update \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
                 case "home": DevLog.write("dev: home"); await model.homePressed(); return
                 case "shot": let ok = await model.session?.shoot() ?? false; DevLog.write("dev: shot \(ok)"); return
                 case "resume": DevLog.write("dev: resume"); model.resumeGame(); return
                 case "close": DevLog.write("dev: close"); await model.closeGame(); return
                 case "state":
                     let s = model.session
-                    DevLog.write("dev: state active \(NSApp.isActive) front \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") session \(s?.game.titleID ?? "-") host \(s?.hostPID ?? 0) launcher \(s?.launcherPID ?? 0) suspended \(s?.suspended ?? false) paused \(s?.paused ?? false) stopped \(s.map { Proc.stopped($0.hostPID) } ?? false) page \(model.page)")
+                    DevLog.write("dev: state active \(NSApp.isActive) front \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") session \(s?.game.titleID ?? "-") host \(s?.hostPID ?? 0) launcher \(s?.launcherPID ?? 0) suspended \(s?.suspended ?? false) paused \(s?.paused ?? false) stopped \(s.map { Proc.stopped($0.hostPID) } ?? false) page \(model.page) macos \(ProcessInfo.processInfo.operatingSystemVersionString)")
                     return
                 default: break
                 }

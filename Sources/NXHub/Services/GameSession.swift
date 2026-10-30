@@ -80,13 +80,21 @@ final class GameSession {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var watch: Timer?
     @ObservationIgnored private var saveWatch: Timer?
-    @ObservationIgnored private var saveMarks: [Int?] = []    // the file numbers of the save and device save folders
+    @ObservationIgnored private var saveFolders: [URL] = []   // the save and device save folders
+    @ObservationIgnored private var saveMarks: [Int?] = []    // their file numbers
     @ObservationIgnored private var workMark: Int?            // <save>.work's, until the game's first save mount makes a new one
     @ObservationIgnored private var saveArmed = false
     @ObservationIgnored private var burstFrom: Date?          // the first commit of a burst not backed up yet
     @ObservationIgnored private var burstLast: Date?
+    @ObservationIgnored private var onFirst: (() -> Void)?
+    @ObservationIgnored private var onSaved: (() -> Void)?
     /// When the game last committed its save (nil: not this session)
     @ObservationIgnored var lastCommitAt: Date?
+    /// The cloud folder the game's save syncs through this run, as its launcher read it at start ("" for none): Home waits for a send before pausing it
+    @ObservationIgnored var syncFolder = ""
+    var syncs: Bool { !syncFolder.isEmpty }
+    /// Home is waiting for the game's last save to reach the cloud before pausing it
+    var sendingSave = false
     /// A commit is waiting for the burst to end (the session's end backs it up anyway)
     var savePending: Bool { burstFrom != nil }
     @ObservationIgnored private var shooting = false
@@ -148,37 +156,48 @@ final class GameSession {
     /// RENAME_SWAP), so the folder's file number changes with every commit, and with nothing else once the game has mounted its save: before that, a cloud save
     /// can come in the same way, so watching starts when <save>.work is made anew (the mount follows the cloud's), or at once for a game that already ran.
     /// `first` is called at the first commit of a burst, `saved` once the folders have stayed the same for 3 s (games often commit several times in a row;
-    /// nxnative's cloud sender waits the same, save_sync.c QUIET_MS), or after a minute of commits. Checked every second while the game is not paused
+    /// nxnative's cloud sender waits the same, save_sync.c QUIET_MS), or after a minute of commits. Checked every second (and by Home, pollSaves)
     func watchSaves(_ folders: [URL], alreadyRunning: Bool, first: @escaping () -> Void, saved: @escaping () -> Void) {
         saveWatch?.invalidate()
-        let work = URL(fileURLWithPath: (folders.first?.path ?? "") + ".work")
+        saveFolders = folders
         saveMarks = folders.map(Paths.fileNumber)
-        workMark = Paths.fileNumber(work)
+        workMark = Paths.fileNumber(workFolder)
         saveArmed = alreadyRunning
         burstFrom = nil; burstLast = nil
+        onFirst = first; onSaved = saved
         saveWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.paused else { return }
-                let marks = folders.map(Paths.fileNumber)
-                if !self.saveArmed {
-                    let w = Paths.fileNumber(work)
-                    if w != nil, w != self.workMark { self.saveArmed = true; self.saveMarks = marks }
-                    return
-                }
-                let now = Date()
-                if marks != self.saveMarks {
-                    self.saveMarks = marks
-                    self.lastCommitAt = now
-                    if self.burstFrom == nil { self.burstFrom = now; first() }
-                    self.burstLast = now
-                }
-                if let from = self.burstFrom, let last = self.burstLast, now.timeIntervalSince(last) >= 3 || now.timeIntervalSince(from) >= 60 {
-                    self.burstFrom = nil; self.burstLast = nil
-                    saved()
-                }
-            }
+            Task { @MainActor in self?.pollSaves() }
         }
     }
+
+    private var workFolder: URL { URL(fileURLWithPath: (saveFolders.first?.path ?? "") + ".work") }
+
+    /// One look at the save folders: a new file number is a commit. A stopped game cannot commit, so while it is paused only a burst that ended is backed up
+    func pollSaves() {
+        guard !saveFolders.isEmpty else { return }
+        let now = Date()
+        if !paused {
+            let marks = saveFolders.map(Paths.fileNumber)
+            if !saveArmed {
+                let w = Paths.fileNumber(workFolder)
+                if w != nil, w != workMark { saveArmed = true; saveMarks = marks }
+                return
+            }
+            if marks != saveMarks {
+                saveMarks = marks
+                lastCommitAt = now
+                if burstFrom == nil { burstFrom = now; onFirst?() }
+                burstLast = now
+            }
+        }
+        if let from = burstFrom, let last = burstLast, now.timeIntervalSince(last) >= 3 || now.timeIntervalSince(from) >= 60 {
+            burstFrom = nil; burstLast = nil
+            onSaved?()
+        }
+    }
+
+    /// nxnative's sender is sending the save now: it works in <save>.sync-tmp/out and removes it however the send ends (save_sync.c send_save)
+    var sendInFlight: Bool { saveFolders.first.map { Paths.exists(URL(fileURLWithPath: $0.path + ".sync-tmp/out")) } ?? false }
 
 
     /// The session is over for NX Hub. A paused game goes on, unless it is kept at its instant (NX Hub quits and the player keeps it suspended)
@@ -187,6 +206,8 @@ final class GameSession {
         watch?.invalidate(); watch = nil
         saveWatch?.invalidate(); saveWatch = nil
         burstFrom = nil; burstLast = nil
+        onFirst = nil; onSaved = nil
+        sendingSave = false
         if paused, hostPID > 0, !keepPaused { kill(hostPID, SIGCONT) }
         if !keepPaused { paused = false; suspended = false; pausedSince = nil }
     }
@@ -266,6 +287,21 @@ final class GameSession {
         }
         DevLog.write("session \(game.titleID): still running 4 s after Quit, SIGTERM to \(launcherPID > 0 ? "launcher \(launcherPID)" : "host \(hostPID)")")
         if launcherPID > 0 { kill(launcherPID, SIGTERM) } else if hostPID > 0 { kill(hostPID, SIGTERM) }
+    }
+
+    /// Ends a paused game without letting it run again: its launcher first (so it sends nothing after the host), then the stopped host. Its last commit stays
+    /// whole (a commit is one folder swap, hle_fs.c), and nothing unsent goes over a cloud save another device made meanwhile: the next start compares the two
+    /// and keeps the newer, with the other among the saves a sync replaced (save_sync.c ss_decide)
+    func closeWithoutSending() async {
+        await findProcesses()
+        if launcherPID > 0 { kill(launcherPID, SIGKILL) }
+        if hostPID > 0 { kill(hostPID, SIGKILL) }
+        DevLog.write("session \(game.titleID): closed while paused, without sending its save (launcher \(launcherPID), host \(hostPID))")
+        paused = false; suspended = false; pausedSince = nil
+        for _ in 0..<30 {
+            if !alive { return }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
     }
 
     /// Hosts stopped by a pause that a previous NX Hub left behind (it quit with the game kept suspended, or crashed during a pause)

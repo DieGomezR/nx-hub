@@ -38,6 +38,8 @@ final class Config {
     var cloudSavesFolder: String { didSet { d.set(cloudSavesFolder, forKey: "cloudSavesFolder") } }
     /// The folder NX Hub last wrote into each app (bundle ID → folder): only those are NX Hub's to change or take out; a folder the player chose in a game's own window stays
     var cloudSavesWritten: [String: String] { didSet { d.set(cloudSavesWritten, forKey: "cloudSavesWritten") } }
+    /// Games whose cloud folder changed while they ran: their record of the last sync (<save>.sync) goes once they have ended (AppModel.resetSyncBases)
+    var cloudSyncResetPending: [String] { didSet { d.set(cloudSyncResetPending, forKey: "cloudSyncResetPending") } }
     /// Each game's id on GameBanana (its mods): title ID → id
     var gbGameIDs: [String: Int] { didSet { d.set(gbGameIDs, forKey: "gbGameIDs") } }
     var gbGameNames: [String: String] { didSet { d.set(gbGameNames, forKey: "gbGameNames") } }
@@ -87,6 +89,7 @@ final class Config {
         gameSaveBackups = d.object(forKey: "gameSaveBackups") as? Int ?? 20
         cloudSavesFolder = d.string(forKey: "cloudSavesFolder") ?? ""
         cloudSavesWritten = d.dictionary(forKey: "cloudSavesWritten") as? [String: String] ?? [:]
+        cloudSyncResetPending = d.stringArray(forKey: "cloudSyncResetPending") ?? []
         gbGameIDs = d.dictionary(forKey: "gbGameIDs") as? [String: Int] ?? [:]
         gbGameNames = d.dictionary(forKey: "gbGameNames") as? [String: String] ?? [:]
         shotMinutes = d.object(forKey: "shotMinutes") as? Int ?? 2

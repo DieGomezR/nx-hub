@@ -220,6 +220,10 @@ private struct BuildSettings: View {
                 Text("The Python that runs nxnative's NSP script (3.12 or newer, with its packages), and the keys of your own Switch.")
                     .font(.caption).foregroundStyle(Theme.secondary)
                 Toggle("Build with this Mac's Metal compiler even when nxnative tested another (--allow-other-metal)", isOn: $config.allowOtherMetal)
+                if let v = TestedXcode.lockedVersion(config.nxnativeURL) {
+                    Text(LF("With this off and Xcode %@ (the one nxnative tested) installed beside yours as /Applications/Xcode-%@.app with its Metal toolchain, NX Hub builds with it and leaves your selected Xcode as it is.", v, v))
+                        .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 Toggle("Pack the app without shaders that stopped translating (--allow-shader-regressions)", isOn: $config.allowShaderRegressions)
             }
         }
@@ -337,7 +341,7 @@ private struct InterfaceSettings: View {
                     .labelsHidden().fixedSize()
                 }
                 .disabled(!config.backupOnGameSave).padding(.leading, 20)
-                Text("Restoring one of those backups (Saves) brings back that save, and its picture shows where you were as the game saved. The exact instant you left a game at is kept only while it is suspended: Home pauses it, and it waits there until you go back, close it or restart the Mac.")
+                Text("Restoring one of those backups (Saves) brings back that save, and its picture shows where you were as the game saved. The exact instant you left a game at is kept only while it is suspended: Home pauses it (with Pause the game while NX Hub is in front on), and it waits there until you go back, close it or restart the Mac.")
                     .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -359,8 +363,9 @@ private struct CloudSavesSettings: View {
             }))
             .disabled(!on && !CloudSaves.iCloudDriveOn)
             if on {
+                let folder = model.config.cloudSavesFolder
                 HStack {
-                    Text(Paths.pretty(Paths.expand(model.config.cloudSavesFolder))).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                    Text(CloudSaves.display(folder)).font(.callout).lineLimit(1).truncationMode(.middle).help(Paths.pretty(Paths.expand(folder)))
                     Spacer()
                     Button("Choose Folder…") { choose() }
                     Button { NSWorkspace.shared.open(Paths.expand(model.config.cloudSavesFolder)) } label: { Image(systemName: "arrow.up.forward.square") }.buttonStyle(.borderless)
@@ -369,6 +374,12 @@ private struct CloudSavesSettings: View {
                 if report.iCloudOff {
                     Label("iCloud Drive is off on this Mac: no game syncs until it is on again (System Settings › your name › iCloud › iCloud Drive).", systemImage: "icloud.slash")
                         .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                } else if CloudSaves.inICloudDrive(folder) && CloudSaves.access() == .noAccess {
+                    Label("NX Hub may not open iCloud Drive, so it cannot show when games sync: allow it in System Settings › Privacy & Security › Files and Folders. The games ask for themselves.", systemImage: "lock.icloud")
+                        .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+                } else if !CloudSaves.inICloudDrive(folder) {
+                    Label("This folder is outside iCloud Drive: the iPhone app cannot reach it, so only games on this Mac use it.", systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if !report.tooOld.isEmpty {
                     Label(LF("Built before nxnative had cloud saves, so they do not sync yet: %@. Rebuilding them brings it.", report.tooOld.map(\.name).joined(separator: ", ")), systemImage: "exclamationmark.triangle.fill")
@@ -382,7 +393,7 @@ private struct CloudSavesSettings: View {
                 Text("iCloud Drive is off on this Mac: turn it on in System Settings › your name › iCloud › iCloud Drive.")
                     .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
             }
-            Text("Each game keeps one file there and syncs a few seconds after it saves; the newest save wins, and each save a sync replaces is kept beside the game's save. Choose the same folder in the iPhone app's Cloud saves to play the same game on both. macOS may ask once whether a game may open iCloud Drive.")
+            Text("Each game keeps one file there and syncs a few seconds after it saves; the newest save wins, and each save a sync replaces is kept beside the game's save. Choose the same folder in the iPhone app's Cloud saves to play the same game on both. macOS may ask once whether a game may open iCloud Drive: a game refused there does not sync (System Settings › Privacy & Security › Files and Folders).")
                 .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { if on { report = model.applyCloudSaves() } }
@@ -393,10 +404,15 @@ private struct CloudSavesSettings: View {
         // A game's own folder (named after its title ID, as the iPhone's picker shows it once a device has synced): every game needs the one above it
         let last = Paths.expand(folder).lastPathComponent
         if last.count == 16, last.allSatisfy(\.isHexDigit) { folder = Paths.expand(folder).deletingLastPathComponent().path }
-        guard CloudSaves.prepare(folder) else { model.notice = LF("NX Hub cannot make or open %@.", Paths.pretty(Paths.expand(folder))); return }
+        guard CloudSaves.prepare(folder) else {
+            model.notice = CloudSaves.inICloudDrive(folder) && CloudSaves.access() == .noAccess
+                ? L("NX Hub may not open iCloud Drive: allow it in System Settings › Privacy & Security › Files and Folders, then try again.")
+                : LF("NX Hub cannot make or open %@.", CloudSaves.display(folder))
+            return
+        }
         model.config.cloudSavesFolder = folder
         report = model.applyCloudSaves()
-        model.notice = folder == chosen ? L("Cloud saves are on: each game syncs from its next start.") : LF("Cloud saves are on, through %@ (the folder that holds every game's): each game syncs from its next start.", Paths.pretty(Paths.expand(folder)))
+        model.notice = folder == chosen ? L("Cloud saves are on: each game syncs from its next start.") : LF("Cloud saves are on, through %@ (the folder that holds every game's): each game syncs from its next start.", CloudSaves.display(folder))
     }
 
     private func choose() {

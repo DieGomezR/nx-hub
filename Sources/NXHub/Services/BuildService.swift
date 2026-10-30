@@ -173,7 +173,15 @@ final class BuildService {
             let head = await Shell.git(job.source, ["rev-parse", "--short=12", "HEAD"])
             job.commit = head.ok ? head.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
             job.chain = NXNativeRepo.chain(in: (try? String(contentsOf: job.source.appendingPathComponent("dm/gfx/nvn/dmsh_chain.h"), encoding: .utf8)) ?? "")
-            self?.launch(job, python: python, args: args, log: logURL, config: config)
+            // Beside a newer Xcode, the tested one builds (DEVELOPER_DIR); the Mac's selected Xcode stays as it is
+            var env: [String: String] = [:]
+            if !config.allowOtherMetal, let x = await TestedXcode.pick(source: job.source) {
+                env["DEVELOPER_DIR"] = x.developerDir
+                let note = LF("Building with %@ (%@): its Metal compiler is the one nxnative tested. The Mac's selected Xcode stays as it is.", x.name, Paths.pretty(x.app))
+                if let h = try? FileHandle(forWritingTo: logURL) { _ = try? h.seekToEnd(); try? h.write(contentsOf: Data((note + "\n").utf8)); try? h.close() }
+                DevLog.write("build \(tid): DEVELOPER_DIR \(x.developerDir)")
+            }
+            self?.launch(job, python: python, args: args, log: logURL, config: config, env: env)
         }
     }
 
@@ -207,14 +215,14 @@ final class BuildService {
         }
     }
 
-    private func launch(_ job: BuildJob, python: URL, args: [String], log: URL, config: Config) {
+    private func launch(_ job: BuildJob, python: URL, args: [String], log: URL, config: Config, env: [String: String] = [:]) {
         guard let out = try? FileHandle(forWritingTo: log) else { return fail(job, LF("Cannot write the build log %@.", log.path), config) }
         _ = try? out.seekToEnd()
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-c", BuildService.wrapper, "nxhub-build", python.path] + args
         p.currentDirectoryURL = job.source
-        p.environment = Shell.environment(["PYTHONUNBUFFERED": "1"])
+        p.environment = Shell.environment(env.merging(["PYTHONUNBUFFERED": "1"]) { a, _ in a })
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = out
         p.standardError = out
@@ -340,6 +348,11 @@ final class BuildService {
         case 2: job.state = .failed(L("The NSP script rejected its arguments (see the log)."))
         case -1: job.state = .failed(job.redLine.map { $0.replacingOccurrences(of: "[RED] ", with: "") } ?? L("The build was stopped from outside (its process is gone)."))
         default: job.state = .failed(job.redLine.map { $0.replacingOccurrences(of: "[RED] ", with: "") } ?? LF("The build stopped (exit %lld).", Int(status)))
+        }
+        // Another Xcode's Metal compiler (an Xcode update): what to install, and that NX Hub then picks it on its own
+        if case .failed(let m) = job.state, m.contains("Metal compiler is not the one the shaders were tested with"), let h = TestedXcode.hint(source: job.source) {
+            job.state = .failed(h)
+            job.append(h)
         }
         DevLog.write("build end: \(job.name) status \(status) state \(job.state) in \(Int(job.elapsed)) s")
         save()

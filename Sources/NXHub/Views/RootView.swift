@@ -5,6 +5,7 @@ import IOKit.ps
 /// The window: the start screen or one of the pages, a console look, keys and the controller moving through it
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack {
@@ -17,12 +18,15 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.15), value: model.closePrompt?.titleID)
         .overlay { if let p = model.switchPrompt { SwitchPrompt(plan: p).transition(.opacity) } }
         .animation(.easeOut(duration: 0.15), value: model.switchPrompt)
+        .overlay { if let c = model.cloudPrompt { CloudPrompt(conflict: c).transition(.opacity) } }
+        .animation(.easeOut(duration: 0.15), value: model.cloudPrompt)
         .overlay(alignment: .bottom) { NoticeBanner() }
         .groupBoxStyle(CardGroupBoxStyle())
         .preferredColorScheme(.dark)
         .foregroundStyle(Theme.text)
         .onAppear {
             model.openSettings = { model.page = .settings }
+            model.openMainWindow = { openWindow(id: "main") }
             if model.config.startFullScreen, let w = NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 500 }), !w.styleMask.contains(.fullScreen) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { w.toggleFullScreen(nil) }
             }
@@ -143,24 +147,67 @@ private struct SwitchPrompt: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { model.switchPrompt = nil }
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { if !plan.closing { model.switchPrompt = nil } }
             VStack(spacing: 16) {
                 HStack(spacing: 18) {
                     GameTileArt(game: plan.from, size: 84).shadow(radius: 14)
                     Image(systemName: "arrow.right").font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.tertiary)
                     GameTileArt(game: plan.to, size: 84).shadow(radius: 14)
                 }
-                Text(LF("%@ is suspended", plan.from.name)).font(.system(size: 24, weight: .bold)).multilineTextAlignment(.center)
-                Text(LF("To open %@, %@ closes first: it goes back to its last save, and the instant you left it at is lost.", plan.to.name, plan.from.name))
+                if plan.closing {
+                    Text(LF("Closing %@…", plan.from.name)).font(.system(size: 24, weight: .bold)).multilineTextAlignment(.center)
+                    Text(LF("Then %@ opens.", plan.to.name))
+                        .foregroundStyle(Theme.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    ProgressView().controlSize(.large).padding(.top, 6)
+                } else {
+                    Text(LF("%@ is suspended", plan.from.name)).font(.system(size: 24, weight: .bold)).multilineTextAlignment(.center)
+                    Text(LF("To open %@, %@ closes first: it goes back to its last save, and the instant you left it at is lost.", plan.to.name, plan.from.name))
+                        .foregroundStyle(Theme.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 14) {
+                        Button { model.switchPrompt = nil } label: { Text("Cancel").frame(minWidth: 96) }.buttonStyle(GlassPill())
+                        Button { Task { await model.closeAndPlay(plan) } } label: { Text("Close and Open").frame(minWidth: 96) }.buttonStyle(GlassPill(tint: Theme.bad))
+                        Button { model.switchPrompt = nil; model.resumeGame() } label: { Text("Back to the Game").frame(minWidth: 96) }.buttonStyle(PrimaryPill())
+                    }
+                    .padding(.top, 6)
+                    if !model.pads.pads.isEmpty {
+                        HStack(spacing: 18) { Hint(glyph: "A", text: L("Back to the game")); Hint(glyph: "X", text: L("Close and open")); Hint(glyph: "B", text: L("Cancel")) }
+                    }
+                }
+            }
+            .padding(36)
+            .frame(maxWidth: 560)
+            .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Color(white: 0.11)))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.stroke))
+            .shadow(color: .black.opacity(0.5), radius: 30)
+        }
+    }
+}
+
+/// A game suspended here was saved on another device meanwhile: going back to this instant would send it over that save at its next save here; closing it
+/// (it is not let run again) leaves that save for its next start
+private struct CloudPrompt: View {
+    @Environment(AppModel.self) private var model
+    let conflict: AppModel.CloudConflict
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture { model.cloudPrompt = nil }
+            VStack(spacing: 16) {
+                ZStack(alignment: .bottomTrailing) {
+                    GameTileArt(game: conflict.game, size: 96).shadow(radius: 16)
+                    Image(systemName: "icloud.fill").font(.system(size: 26)).foregroundStyle(Theme.accent).offset(x: 10, y: 8)
+                }
+                Text(LF("%@ was saved on another device", conflict.game.name)).font(.system(size: 24, weight: .bold)).multilineTextAlignment(.center)
+                Text(LF("That save (%@) is newer than this suspended instant. Close the game here and its next start brings in that save. Going back to this instant replaces it in the cloud the next time the game saves here (the replaced one is kept with this game's saves).", conflict.cloud.relative))
                     .foregroundStyle(Theme.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 14) {
-                    Button { model.switchPrompt = nil } label: { Text("Cancel").frame(minWidth: 96) }.buttonStyle(GlassPill())
-                    Button { model.switchPrompt = nil; Task { await model.closeAndPlay(plan) } } label: { Text(LF("Close and open %@", plan.to.name)).frame(minWidth: 96) }.buttonStyle(GlassPill(tint: Theme.bad))
-                    Button { model.switchPrompt = nil; model.resumeGame() } label: { Text(LF("Back to %@", plan.from.name)).frame(minWidth: 96) }.buttonStyle(PrimaryPill())
+                    Button { model.cloudPrompt = nil } label: { Text("Cancel").frame(minWidth: 96) }.buttonStyle(GlassPill())
+                    Button { model.resumeNow() } label: { Text("Go Back Anyway").frame(minWidth: 96) }.buttonStyle(GlassPill(tint: Theme.bad))
+                    Button { model.cloudPrompt = nil; Task { await model.closeKeepingCloud(conflict) } } label: { Text("Close the Game").frame(minWidth: 96) }.buttonStyle(PrimaryPill())
                 }
                 .padding(.top, 6)
                 if !model.pads.pads.isEmpty {
-                    HStack(spacing: 18) { Hint(glyph: "A", text: L("Back to the game")); Hint(glyph: "X", text: L("Close and open")); Hint(glyph: "B", text: L("Cancel")) }
+                    HStack(spacing: 18) { Hint(glyph: "A", text: L("Close the Game")); Hint(glyph: "X", text: L("Go Back Anyway")); Hint(glyph: "B", text: L("Cancel")) }
                 }
             }
             .padding(36)

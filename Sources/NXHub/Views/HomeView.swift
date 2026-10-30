@@ -166,6 +166,8 @@ struct StatusChips: View {
         HStack(spacing: 6) {
             if let job = model.builds.job(for: game.titleID) {
                 Chip(text: job.state == .queued ? L("Waiting to build") : LF("Building %@", job.fraction.map { "\(Int($0 * 100)) %" } ?? "…"), color: Theme.accent, systemImage: "hammer.fill")
+            } else if let s = model.session, s.game.titleID == game.titleID, s.sendingSave {
+                Chip(text: L("Sending its save to the cloud…"), color: Theme.accent, systemImage: "icloud.and.arrow.up.fill")
             } else if let s = model.session, s.game.titleID == game.titleID, s.suspended {
                 Chip(text: L(s.paused ? "Paused" : "In the background"), color: Theme.warn, systemImage: "pause.fill")
             } else if model.isRunning(game) {

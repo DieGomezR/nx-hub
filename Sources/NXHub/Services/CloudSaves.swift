@@ -7,7 +7,39 @@ enum CloudSaves {
     static let key = "cloudSaves.folder"
     /// iCloud Drive on this Mac (missing while iCloud Drive is off)
     static let iCloudDrive = Paths.home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs", isDirectory: true)
-    static var iCloudDriveOn: Bool { Paths.isDirectory(iCloudDrive) }
+
+    /// iCloud Drive as NX Hub finds it: on, off (no folder), or there but closed to NX Hub (macOS asks each app once: Privacy & Security › Files and Folders).
+    /// Only "off" stops the games' syncing: each game asks for itself
+    enum ICloudState { case on, off, noAccess }
+    /// From the folder alone, which macOS does not ask about
+    static var iCloudState: ICloudState {
+        var st = stat()
+        if stat(iCloudDrive.path, &st) != 0 { return errno == EPERM || errno == EACCES ? .noAccess : .off }
+        return .on
+    }
+    static var iCloudDriveOn: Bool { iCloudState != .off }
+    /// Also whether NX Hub may read inside it: the first look makes macOS ask, so only where cloud saves are on
+    static func access() -> ICloudState {
+        let s = iCloudState
+        guard s == .on else { return s }
+        guard let d = opendir(iCloudDrive.path) else { return errno == EPERM || errno == EACCES ? .noAccess : .on }
+        closedir(d)
+        return .on
+    }
+
+    /// A folder in iCloud Drive
+    static func inICloudDrive(_ folder: String) -> Bool {
+        let p = Paths.expand(folder == "icloud" ? defaultFolder.path : folder).standardizedFileURL.path
+        return p == iCloudDrive.path || p.hasPrefix(iCloudDrive.path + "/")
+    }
+
+    /// A folder as Finder names it: "iCloud Drive › nxnative Saves" for one in iCloud Drive, else its path from ~
+    static func display(_ folder: String) -> String {
+        let p = Paths.expand(folder == "icloud" ? defaultFolder.path : folder).standardizedFileURL.path
+        guard inICloudDrive(p) else { return Paths.pretty(URL(fileURLWithPath: p)) }
+        let rest = p.dropFirst(iCloudDrive.path.count).split(separator: "/")
+        return ([L("iCloud Drive")] + rest.map(String.init)).joined(separator: " › ")
+    }
     /// The folder nxnative's own "icloud" value names: iCloud Drive › nxnative Saves
     static var defaultFolder: URL { iCloudDrive.appendingPathComponent("nxnative Saves", isDirectory: true) }
 
@@ -29,7 +61,7 @@ enum CloudSaves {
     }
 
     /// Whether a folder lies in iCloud Drive while iCloud Drive is off (nxnative would then sync into a plain folder that goes nowhere)
-    static func unreachable(_ folder: String) -> Bool { Paths.expand(folder).path.hasPrefix(iCloudDrive.path) && !iCloudDriveOn }
+    static func unreachable(_ folder: String) -> Bool { inICloudDrive(folder) && iCloudState == .off }
 
     /// Writes the folder into the app's preferences, or removes the key ("" or nil): its next start takes it
     static func set(_ folder: String?, for app: AppBundle) {

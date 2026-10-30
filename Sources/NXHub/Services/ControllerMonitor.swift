@@ -132,7 +132,7 @@ final class ControllerMonitor {
         let before = held[pad] ?? []
         held[pad] = now
         if let r = repeating, r.pad == pad, !now.contains(r.button.rawValue) { stopRepeat() }
-        if NSApp.modalWindow != nil { stopRepeat(); return }   // an AppKit alert or panel is up: it takes the keyboard and mouse, and presses would act behind it
+        if NSApp.modalWindow != nil, NSApp.isActive { stopRepeat(); return }   // an AppKit alert or panel is up in front: it takes the keyboard and mouse, and presses would act behind it
         if now.contains("HOME") && !before.contains("HOME") { onHome?() }
         guard NSApp.isActive else { return }
         for name in now.subtracting(before) {

@@ -10,8 +10,13 @@ struct SavesPage: View {
         PageShell(title: L("Saves"), systemImage: "externaldrive.fill") {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Before NX Hub replaces or restores a save it backs up the current one. A save is replaced only while its game is closed. Restoring a backup made when the game saved brings back that save; its picture shows where you were as the game saved.")
-                        .foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Each time a game saves while it runs from NX Hub, a backup with a picture of that moment joins its strip below (Settings › Saves). Click one to restore it, or to restore it and play.", systemImage: "camera.fill")
+                        Label("Home on the controller suspends the game at its very instant: it waits here until you go back to it.", systemImage: "pause.circle.fill")
+                        Label("Before NX Hub replaces or restores a save it backs up the current one. A save is replaced only while its game is closed.", systemImage: "arrow.down.doc.fill")
+                    }
+                    .font(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                    GroupBox("Cloud saves") { CloudSavesSettings() }
                     ForEach(slots) { s in SaveCard(slot: s) }
                     if slots.isEmpty { Text("No saves yet.").foregroundStyle(Theme.secondary) }
                 }

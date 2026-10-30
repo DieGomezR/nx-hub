@@ -32,6 +32,12 @@ final class AppModel {
     }
     /// A game suspended here was saved on another device meanwhile: close it (its next start brings in that save) or go back to this instant anyway
     var cloudPrompt: CloudConflict?
+    @ObservationIgnored private var cloudPromptAt = Date.distantPast   // presses right after it appears are not taken (a second A from the resume that raised it)
+    /// Asks about a game another device saved while it was suspended here
+    func askCloud(_ c: CloudConflict) {
+        if cloudPrompt == nil { cloudPromptAt = Date() }
+        cloudPrompt = c
+    }
     struct CloudConflict: Identifiable, Equatable {
         let game: Game
         let cloud: Date                // when the cloud's file changed
@@ -59,7 +65,7 @@ final class AppModel {
     @ObservationIgnored private var lastGameSave: [String: String] = [:]    // title ID → the signature of its last "when the game saved" backup
     /// NX Hub keeps running out of sight (no window, no Dock icon) to hold a suspended game at its instant after Quit
     var hiddenInBackground = false
-    @ObservationIgnored private var hiddenWindows: [NSWindow] = []
+    @ObservationIgnored private var hiddenAt = Date.distantPast
     /// Opens the main window again (RootView sets it): after Quit closed it, hiding left none to bring back
     @ObservationIgnored var openMainWindow: (() -> Void)?
 
@@ -82,7 +88,11 @@ final class AppModel {
         let wc = NSWorkspace.shared.notificationCenter
         // Logging out, restarting or shutting down: a suspended game goes on, so it can quit with the Mac (a stopped one cannot answer and would hold it up)
         wc.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in if let s = self?.session, s.paused { DevLog.write("power off: \(s.game.titleID) goes on"); s.cont() } }
+            Task { @MainActor in
+                guard let self, let s = self.session, s.paused else { return }
+                if self.cloudConflict(s) != nil { DevLog.write("power off: \(s.game.titleID) closes without sending (another device saved it meanwhile)"); s.killWithoutSending() }
+                else { DevLog.write("power off: \(s.game.titleID) goes on"); s.cont() }
+            }
         }
         for n in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             wc.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.updateRunning() } }
@@ -146,10 +156,12 @@ final class AppModel {
 
     /// A controller press: the start screen moves through its games and buttons; every other screen goes back with B
     func handle(_ b: PadButton) {
+        guard !hiddenInBackground else { return }   // no window to act in
         if let c = cloudPrompt {
+            guard Date().timeIntervalSince(cloudPromptAt) > 0.6 else { return }
             switch b {
-            case .a: cloudPrompt = nil; Task { await closeKeepingCloud(c) }
-            case .x: resumeNow()
+            case .x: cloudPrompt = nil; Task { await closeKeepingCloud(c) }   // X closes, as on the start screen: the A that resumed never closes
+            case .a: resumeNow()
             case .b: cloudPrompt = nil
             default: break
             }
@@ -165,8 +177,8 @@ final class AppModel {
             }
             return
         }
-        if closePrompt != nil {
-            if b == .a { Task { await closeGame() } } else if b == .b { closePrompt = nil }
+        if let g = closePrompt {
+            if b == .a { Task { await closeGame(g) } } else if b == .b { closePrompt = nil }
             return
         }
         guard page == .home else {
@@ -212,6 +224,7 @@ final class AppModel {
         for g in games where g.app != nil { out[g.id] = await repo.changes(for: g, record: config.buildRecords[g.titleID]) }
         changes = out
         DevLog.write("repo: valid \(repo.valid) head \(repo.shortHead) branch \(repo.branch ?? "detached") dirty \(repo.dirty) upstream \(repo.upstream.prefix(8)) incoming \(repo.incoming.count) chain \(repo.chain) upstream chain \(repo.upstreamChain) error \(repo.error ?? "-")")
+        DevLog.write("repo: edited \(repo.editedFiles) own \(repo.localCommits.map { "\($0.short) \($0.subject)" })")
         for (id, c) in out { DevLog.write("  changes \(id): known \(c.known) approx \(c.approximate) profile \(c.profile.count) engine \(c.engine) chainOutdated \(c.chainOutdated)") }
     }
 
@@ -242,10 +255,10 @@ final class AppModel {
     /// nxnative's record of a game's last sync (<save>.sync) goes once the game has ended when its cloud folder changed while it ran
     /// (applyCloudSaves): the first sync with the new folder then goes by date
     private func resetSyncBases() {
-        guard !config.cloudSyncResetPending.isEmpty else { return }
+        guard startDone, !config.cloudSyncResetPending.isEmpty else { return }   // the library is read: a game not in it now stays pending
         var left: [String] = []
         for tid in config.cloudSyncResetPending {
-            guard let g = games.first(where: { $0.titleID == tid }) else { continue }
+            guard let g = games.first(where: { $0.titleID == tid }) else { left.append(tid); continue }
             if isRunning(g) || (session?.game.titleID == tid && session?.alive == true) { left.append(tid); continue }
             try? FileManager.default.removeItem(at: saveSlot(for: g).syncBase)
             DevLog.write("cloud saves: \(tid): record of the last sync removed (its folder changed while it ran)")
@@ -266,7 +279,7 @@ final class AppModel {
             return true
         }
         // A game kept at its instant is not let go on behind another one: go back to it, or close it first (SwitchPrompt)
-        if let s = session, s.game.titleID != g.titleID, s.paused, s.alive {
+        if let s = session, s.game.titleID != g.titleID, s.paused || s.pausing, s.alive {
             switchPrompt = SwitchPlan(from: s.game, to: g)
             return false
         }
@@ -375,6 +388,8 @@ final class AppModel {
         page = .home; homeRow = .games
         if let i = games.firstIndex(where: { $0.titleID == s.game.titleID }) { homeIndex = i }
         s.suspended = true
+        s.pausing = config.pauseOnHome
+        defer { s.pausing = false }
         let front = await bringForward()
         DevLog.write("home: NX Hub in front: \(front)")
         guard front else {
@@ -384,8 +399,13 @@ final class AppModel {
         }
         if config.pauseOnHome {
             try? await Task.sleep(for: .milliseconds(250))   // the game hears first that it lost focus (front_mac.m: focus state 2), then it stops
-            // While its save went to the cloud the game ran on behind NX Hub: the picture again, of the instant it stops at (a covered window draws about once a second)
-            if s.suspended && !s.isFrontmost, await waitForCloudSend(s) { await s.shoot(timeout: 1.5) }
+            // While its save went to the cloud the game ran on behind NX Hub: the picture again, of the instant it stops at (a covered window draws about once
+            // a second), and a look again for a commit made meanwhile; all within one 15 s budget
+            let started = Date()
+            while s.suspended && !s.isFrontmost, await waitForCloudSend(s, budgetFrom: started) {
+                await s.shoot(timeout: 1.5)
+                if Date().timeIntervalSince(started) >= 15 { break }
+            }
             if s.suspended && !s.isFrontmost { s.stop() }
         }
     }
@@ -397,9 +417,11 @@ final class AppModel {
             return NSApp.isActive
         }
         NSApp.unhide(nil)
-        if let w = NSApp.windows.first(where: { $0.canBecomeMain }) {
+        if let w = NSApp.windows.first(where: { $0.canBecomeMain || $0.isMiniaturized }) {
             if w.isMiniaturized { w.deminiaturize(nil) }
             w.makeKeyAndOrderFront(nil)
+        } else {
+            openMainWindow?()   // Quit closed it and was then cancelled
         }
         NSApp.activate()
         if await came() { return true }
@@ -418,7 +440,7 @@ final class AppModel {
         switchPrompt = nil
         guard let s = session else { return }
         if let c = cloudConflict(s) {
-            cloudPrompt = c
+            askCloud(c)
             DevLog.write("resume \(s.game.titleID): the cloud's save changed \(c.cloud) while it was paused (since \(s.pausedSince.map { "\($0)" } ?? "-")): asking")
             return
         }
@@ -439,10 +461,15 @@ final class AppModel {
         return CloudConflict(game: s.game, cloud: cloud)
     }
 
-    /// Closes the game. A paused one whose cloud save another device changed meanwhile closes without running again (nothing of this instant is sent)
-    func closeGame() async {
-        guard let s = session else { return }
+    /// Closes a game: the one NX Hub follows by default. A paused one whose cloud save another device changed meanwhile closes without running again
+    /// (nothing of this instant is sent). Another running game (opened elsewhere) is asked to quit as its own Quit does
+    func closeGame(_ g: Game? = nil) async {
         closePrompt = nil
+        if let g, session?.game.titleID != g.titleID {
+            for a in NSWorkspace.shared.runningApplications where a.bundleIdentifier?.lowercased() == g.bundleID.lowercased() { a.terminate() }
+            return
+        }
+        guard let s = session else { return }
         if cloudConflict(s) != nil { await s.closeWithoutSending() } else { await s.close() }
     }
 
@@ -462,10 +489,10 @@ final class AppModel {
         switchPrompt = busy
         if cloudConflict(s) != nil { await s.closeWithoutSending() } else { await s.close() }
         for _ in 0..<50 where s.alive { try? await Task.sleep(for: .milliseconds(200)) }   // its launcher syncs the save once the host has quit
-        switchPrompt = nil
-        if s.alive { notice = LF("%@ is still closing: try again in a moment.", plan.from.name); return }
+        if s.alive { switchPrompt = nil; notice = LF("%@ is still closing: try again in a moment.", plan.from.name); return }
         if session === s { endSession() }
         await play(plan.to)
+        switchPrompt = nil
     }
 
     /// A game a previous NX Hub left paused (it crashed, or was quit some other way, during a pause) stays at its instant: it is this session again, suspended.
@@ -488,7 +515,7 @@ final class AppModel {
             if let p = Proc.parent(pid), p > 1 { s.launcherPID = p }
             let still = Proc.stopped(pid)   // something may have let it go on meanwhile
             s.suspended = still; s.paused = still
-            s.pausedSince = still ? (Paths.modified(ShotStore.last(g.titleID)) ?? Date()) : nil
+            s.pausedSince = still ? (GameSession.keptPause(g.titleID, host: pid) ?? Paths.modified(saveSlot(for: g).syncBase)) : nil   // unknown: no cloud check
             beginSession(s, alreadyRunning: true)
             if let i = games.firstIndex(where: { $0.titleID == g.titleID }) { homeIndex = i }
             adopted = true
@@ -499,8 +526,10 @@ final class AppModel {
     /// NX Hub out of sight after Quit with a game kept suspended: no window and no Dock icon, still holding the game (and letting it go on if the Mac shuts down)
     func hideInBackground() {
         hiddenInBackground = true
-        hiddenWindows = NSApp.windows.filter { $0.isVisible && !($0 is NSPanel) }   // a window Quit already closed is not among them
-        for w in hiddenWindows { w.orderOut(nil) }
+        hiddenAt = Date()
+        // Activation goes to the Finder, not to the stopped game behind NX Hub (appActivated would let it go on); hide() also leaves a full-screen Space
+        if let f = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first { NSApp.yieldActivation(to: f); f.activate() }
+        NSApp.hide(nil)
         NSApp.setActivationPolicy(.accessory)
         DevLog.write("hidden in the background with \(session?.game.titleID ?? "-") suspended")
     }
@@ -509,27 +538,28 @@ final class AppModel {
     @discardableResult
     func showFromBackground() -> Bool {
         guard hiddenInBackground else { return true }
-        let back = hiddenWindows
-        hiddenWindows = []
-        hiddenInBackground = false
-        NSApp.setActivationPolicy(.regular)
+        let had = leaveBackground()
         page = .home; homeRow = .games
         if let s = session, let i = games.firstIndex(where: { $0.titleID == s.game.titleID }) { homeIndex = i }
-        for w in back { w.makeKeyAndOrderFront(nil) }
-        if back.isEmpty { openMainWindow?() }
-        NSApp.activate()
-        return !back.isEmpty
+        Task { _ = await bringForward() }   // macOS 14 activates cooperatively: the same ways as Home
+        return had
     }
 
-    /// Out of hiding without coming to the front, for Home in the game it held (that takes its picture, then brings NX Hub forward): the hidden window
-    /// goes back behind the game
-    private func leaveBackground() {
-        let back = hiddenWindows
-        hiddenWindows = []
+    /// NX Hub's window again after a Quit that closed it was cancelled
+    func reopenIfClosed() {
+        if !NSApp.windows.contains(where: { $0.canBecomeMain || $0.isMiniaturized }) { openMainWindow?() }
+    }
+
+    /// Out of hiding without coming to the front, for Home in the game it held (that takes its picture, then brings NX Hub forward). Returns whether
+    /// NX Hub's window was still there (else it opens anew: Quit had closed it)
+    @discardableResult
+    private func leaveBackground() -> Bool {
         hiddenInBackground = false
         NSApp.setActivationPolicy(.regular)
-        for w in back { w.orderBack(nil) }
-        if back.isEmpty { openMainWindow?() }
+        NSApp.unhideWithoutActivation()
+        let had = NSApp.windows.contains { $0.canBecomeMain || $0.isMiniaturized }
+        if !had { openMainWindow?() }
+        return had
     }
 
     /// With cloud saves on, nxnative sends a committed save from a thread of the game itself once the game has not committed for 3 s (dm/host/save_sync.c
@@ -537,21 +567,31 @@ final class AppModel {
     /// last commit (the sender's quiet time and NX Hub's polling), and not while a send runs (send_save works in <save>.sync-tmp/out and removes it however it
     /// ends: sent, already in step, or failed). At most 15 s (a fetch of the cloud's copy may take 10 s, FETCH_MS). Returns whether it waited
     @discardableResult
-    private func waitForCloudSend(_ s: GameSession) async -> Bool {
+    private func waitForCloudSend(_ s: GameSession, budgetFrom started: Date) async -> Bool {
         guard s.syncs else { return false }
-        let started = Date()
+        let began = Date()
         var waited = false
+        var busyFrom: Date?             // the sync work seen running (a send, the first mount's fetch), since when
+        var busyEnded: Date?            // when the last one seen ended
+        var commitDuringBusy = false    // a commit came after that work began: the sender sends again once quiet, counted from its end
         while s.suspended && !s.isFrontmost {
             s.pollSaves()   // a commit just before Home: the timer may not have seen it yet
-            let inFlight = s.sendInFlight
-            let quiet = s.lastCommitAt.map { Date().timeIntervalSince($0) < 4 } ?? false
-            guard inFlight || quiet else { break }
-            if Date().timeIntervalSince(started) >= 15 { DevLog.write("home: \(s.game.titleID): its save was still on its way to the cloud after 15 s; paused anyway"); break }
-            if !waited { waited = true; s.sendingSave = true; DevLog.write("home: \(s.game.titleID): waiting for its last save to reach the cloud") }
+            let now = Date()
+            if let b = s.syncBusySince {
+                busyFrom = b; busyEnded = nil
+                commitDuringBusy = s.lastCommitAt.map { $0 > b.addingTimeInterval(-1) } ?? false   // seen up to a second late
+            } else if busyFrom != nil {
+                busyFrom = nil; busyEnded = now
+            }
+            let quietAfterCommit = s.lastCommitAt.map { now.timeIntervalSince($0) < 4 } ?? false
+            let quietAfterSend = commitDuringBusy && (busyEnded.map { now.timeIntervalSince($0) < 4 } ?? false)
+            guard busyFrom != nil || quietAfterCommit || quietAfterSend else { break }
+            if now.timeIntervalSince(started) >= 15 { DevLog.write("home: \(s.game.titleID): its save was still on its way to the cloud after 15 s; paused anyway"); break }
+            if !waited { waited = true; s.sendingSave = true; DevLog.write("home: \(s.game.titleID): waiting for its save to reach the cloud") }
             try? await Task.sleep(for: .milliseconds(250))
         }
         s.sendingSave = false
-        if waited { DevLog.write("home: \(s.game.titleID): waited \(String(format: "%.1f", Date().timeIntervalSince(started))) s for its save to reach the cloud") }
+        if waited { DevLog.write("home: \(s.game.titleID): waited \(String(format: "%.1f", Date().timeIntervalSince(began))) s for its save to reach the cloud") }
         return waited
     }
 
@@ -629,8 +669,9 @@ final class AppModel {
         guard let app, let s = session, s.owns(app) else { return }
         if switchPrompt?.from.titleID == s.game.titleID, switchPrompt?.closing != true { switchPrompt = nil }
         guard s.suspended || s.paused else { return }
+        if hiddenInBackground && Date().timeIntervalSince(hiddenAt) < 2 { DevLog.write("activated \(s.game.titleID) right after hiding: kept as it is"); return }
         if let c = cloudConflict(s) {
-            cloudPrompt = c
+            askCloud(c)
             if hiddenInBackground { showFromBackground() } else { Task { _ = await bringForward() } }
             DevLog.write("activated \(s.game.titleID) while paused, its cloud save changed meanwhile: kept stopped, asking")
             return

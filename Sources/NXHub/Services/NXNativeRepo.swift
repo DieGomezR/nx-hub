@@ -57,6 +57,12 @@ final class NXNativeRepo {
     var remoteURL = ""
     var upstream = ""              // origin/main's hash
     var incoming: [Commit] = []    // HEAD..origin/main, newest first
+    /// Changes of our own on top of nxnative (origin/main..HEAD, newest first): updates put them back on top (rebase), so an update does not lose them
+    var localCommits: [Commit] = []
+    /// Tracked files edited and not kept as a change yet: an update waits for them
+    var editedFiles: [String] = []
+    /// NX Hub's branch for those changes
+    static let localBranch = "nxhub-local"
     var chain = ""                 // the shader chain of the checked-out tree
     var upstreamChain = ""         // origin/main's
     var lastFetch: Date?
@@ -91,12 +97,63 @@ final class NXNativeRepo {
         branch = b.ok ? b.out.trimmingCharacters(in: .whitespacesAndNewlines) : nil
         let s = await Shell.git(url, ["status", "--porcelain", "--untracked-files=no"])
         dirty = s.ok && !s.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        editedFiles = s.ok ? s.out.split(separator: "\n").compactMap { l in l.count > 3 ? String(l.dropFirst(3)) : nil } : []
         remoteURL = (await Shell.git(url, ["remote", "get-url", "origin"])).out
         let d = await Shell.git(url, ["log", "-1", "--format=%ct", "HEAD"])
         headDate = Double(d.out.trimmingCharacters(in: .whitespacesAndNewlines)).map { Date(timeIntervalSince1970: $0) }
         chain = NXNativeRepo.chain(in: (try? String(contentsOf: url.appendingPathComponent("dm/gfx/nvn/dmsh_chain.h"), encoding: .utf8)) ?? "")
         upstreamChain = NXNativeRepo.chain(in: (await Shell.git(url, ["show", "origin/main:dm/gfx/nvn/dmsh_chain.h"])).out)
         if upstream.isEmpty || upstream == head { incoming = [] } else { incoming = await log(range: "HEAD..origin/main") }
+        if upstream.isEmpty || upstream == head { localCommits = [] } else { localCommits = await log(range: "origin/main..HEAD") }
+    }
+
+    /// New commits that change files our own changes change too: where an update may not fit them back on top (it then stops, changing nothing)
+    var crossing: [Commit] {
+        let mine = Set(localCommits.flatMap(\.files))
+        return mine.isEmpty ? [] : incoming.filter { !mine.isDisjoint(with: $0.files) }
+    }
+
+    /// A change of our own that nxnative now has too (a commit coming in with its title, as GitHub merges a pull request: "<title> (#123)")
+    func alsoUpstream(_ c: Commit) -> Bool { incoming.contains { $0.subject == c.subject || $0.subject.hasPrefix(c.subject + " (#") } }
+
+    /// git with an author for the commits a rebase or a kept change makes, when the Mac's git has none
+    private func gitWriting(_ args: [String], timeout: TimeInterval = 300) async -> ShellResult {
+        let who = await Shell.git(url, ["config", "user.email"])
+        let id = who.ok && !who.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : ["-c", "user.name=NX Hub", "-c", "user.email=nxhub@localhost"]
+        return await Shell.run("/usr/bin/git", id + ["-C", url.path] + args, env: Shell.environment(["GIT_TERMINAL_PROMPT": "0", "GIT_EDITOR": "true"]), timeout: timeout)
+    }
+
+    /// On NX Hub's branch (a detached checkout gets it where it stands); another branch of the player's own is left alone
+    private func onLocalBranch() async -> Bool {
+        if branch == NXNativeRepo.localBranch { return true }
+        guard branch == nil || branch == "main" && localCommits.isEmpty else { error = LF("The checkout is on branch %@: NX Hub keeps changes of its own only on %@. Switch branches in Terminal.", branch ?? "", NXNativeRepo.localBranch); return false }
+        let r = await Shell.git(url, ["checkout", "-B", NXNativeRepo.localBranch])
+        if !r.ok { error = r.message }
+        return r.ok
+    }
+
+    /// Keeps the checkout's edits as one change of our own (a commit on NX Hub's branch, titled `title`): from then on updates put it back on top
+    func keepEdits(title: String) async -> Bool {
+        busy = true; defer { busy = false }
+        await refresh()
+        guard dirty else { return true }
+        guard await onLocalBranch() else { return false }
+        let r = await gitWriting(["commit", "-a", "--no-verify", "-m", title])
+        if !r.ok { error = r.message }
+        await refresh()
+        return r.ok
+    }
+
+    /// Takes one of our own changes out (nxnative has it now, or it is not wanted): the checkout goes on without it
+    func drop(_ c: Commit) async -> Bool {
+        busy = true; defer { busy = false }
+        await refresh()
+        if dirty { error = L("The checkout has edits that are not kept as a change: keep or undo them first."); return false }
+        guard await onLocalBranch() else { return false }
+        let r = await gitWriting(["rebase", "--onto", c.hash + "^", c.hash])
+        if !r.ok { _ = await gitWriting(["rebase", "--abort"]); error = LF("Could not take out “%@”: %@", c.subject, r.message) }
+        await refresh()
+        return r.ok
     }
 
     /// Asks GitHub for new commits (git fetch), then reads the state again
@@ -109,21 +166,42 @@ final class NXNativeRepo {
         if !r.ok { error = LF("Could not reach GitHub: %@", r.message) }
     }
 
-    /// Moves the checkout to origin/main: a detached worktree checks it out, a branch that tracks it fast-forwards. Local changes stop it
+    /// Moves the checkout to origin/main. Without changes of our own: a detached checkout checks it out, main fast-forwards. With them (NX Hub's branch):
+    /// they go back on top of the new nxnative (rebase); one nxnative already has is left out by git. If one no longer applies, everything stays as it was
     func update() async -> Bool {
         busy = true; defer { busy = false }
         await refresh()
-        if dirty { error = L("The checkout has local changes: commit or stash them in Terminal first."); return false }
-        let r: ShellResult
-        switch branch {
-        case nil: r = await Shell.git(url, ["checkout", "--detach", "origin/main"])
-        case "main"?: r = await Shell.git(url, ["merge", "--ff-only", "origin/main"])
-        case let other?:
-            error = LF("The checkout is on branch %@, not main: update it in Terminal.", other); return false
+        if dirty { error = LF("These edits are not kept as a change of your own yet, so the update would mix them up: %@. Keep them as a change (below), or undo them.", editedFiles.joined(separator: ", ")); return false }
+        if localCommits.isEmpty && branch != NXNativeRepo.localBranch {
+            let r: ShellResult
+            switch branch {
+            case nil: r = await Shell.git(url, ["checkout", "--detach", "origin/main"])
+            case "main"?: r = await Shell.git(url, ["merge", "--ff-only", "origin/main"])
+            case let other?:
+                error = LF("The checkout is on branch %@, not main: update it in Terminal.", other); return false
+            }
+            if !r.ok { error = r.message }
+            await refresh()
+            return r.ok
         }
-        if !r.ok { error = r.message }
+        guard await onLocalBranch() else { return false }
+        let r = await gitWriting(["rebase", "origin/main"])
+        if !r.ok {
+            // "could not apply 1a2b3c4... <title>": the change that collides with the new nxnative
+            let text = r.out + "\n" + r.err
+            let stopped = text.split(separator: "\n").first { $0.contains("could not apply") }.map { line -> String in
+                let rest = line.components(separatedBy: "... ").dropFirst().joined(separator: "... ")
+                return rest.isEmpty ? String(line) : rest
+            } ?? r.message
+            _ = await gitWriting(["rebase", "--abort"])
+            await refresh()
+            error = LF("Your change “%@” does not fit the new nxnative (both change the same lines), so nothing was updated and the checkout is as it was. If nxnative now has that change, take it out (below) and update again.", stopped)
+            DevLog.write("update: rebase stopped on \(stopped); aborted")
+            return false
+        }
         await refresh()
-        return r.ok
+        DevLog.write("update: \(localCommits.count) changes of our own on top of \(String(upstream.prefix(8)))")
+        return true
     }
 
     /// Commits of a range (newest first) with the files each changes

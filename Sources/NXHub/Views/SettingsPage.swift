@@ -6,7 +6,7 @@ struct SettingsPage: View {
     @State private var section: Section = .games
 
     enum Section: String, CaseIterable, Identifiable {
-        case games, library, build, interface, data
+        case games, library, build, interface, saves, data
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -14,6 +14,7 @@ struct SettingsPage: View {
             case .library: return L("Library")
             case .build: return L("nxnative and builds")
             case .interface: return L("Interface")
+            case .saves: return L("Saves")
             case .data: return L("Data and folders")
             }
         }
@@ -23,6 +24,7 @@ struct SettingsPage: View {
             case .library: return "square.grid.2x2.fill"
             case .build: return "hammer.fill"
             case .interface: return "paintbrush.fill"
+            case .saves: return "externaldrive.fill"
             case .data: return "folder.fill"
             }
         }
@@ -53,6 +55,7 @@ struct SettingsPage: View {
                         case .library: LibrarySettings()
                         case .build: BuildSettings()
                         case .interface: InterfaceSettings()
+                        case .saves: SavesSettings()
                         case .data: DataSettings()
                         }
                     }
@@ -328,6 +331,15 @@ private struct InterfaceSettings: View {
                     .font(.caption).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// Saves: backups when a game starts or saves, and the cloud folder every game syncs through
+private struct SavesSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var config = model.config
         GroupBox("Saves") {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle("Back up a game's save each time it starts from NX Hub", isOn: $config.backupBeforePlay)
@@ -350,7 +362,7 @@ private struct InterfaceSettings: View {
 }
 
 /// nxnative's cloud saves for every game: one folder in iCloud Drive that each game's app syncs its save through (docs/settings.md, Cloud saves)
-private struct CloudSavesSettings: View {
+struct CloudSavesSettings: View {
     @Environment(AppModel.self) private var model
     @State private var report = AppModel.CloudReport()
 
@@ -375,7 +387,7 @@ private struct CloudSavesSettings: View {
                     Label("iCloud Drive is off on this Mac: no game syncs until it is on again (System Settings › your name › iCloud › iCloud Drive).", systemImage: "icloud.slash")
                         .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
                 } else if CloudSaves.inICloudDrive(folder) && CloudSaves.access() == .noAccess {
-                    Label("NX Hub may not open iCloud Drive, so it cannot show when games sync: allow it in System Settings › Privacy & Security › Files and Folders. The games ask for themselves.", systemImage: "lock.icloud")
+                    Label("NX Hub may not open iCloud Drive, so it cannot show when games sync, nor warn when another device saved a game suspended here: allow it in System Settings › Privacy & Security › Files and Folders. The games ask for themselves.", systemImage: "lock.icloud")
                         .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
                 } else if !CloudSaves.inICloudDrive(folder) {
                     Label("This folder is outside iCloud Drive: the iPhone app cannot reach it, so only games on this Mac use it.", systemImage: "info.circle")

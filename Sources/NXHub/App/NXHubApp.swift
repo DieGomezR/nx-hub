@@ -47,6 +47,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let model = AppDelegate.model else { return .terminateNow }
         let byTheSystem = NSAppleEventManager.shared().currentAppleEvent?.attributeDescriptor(forKeyword: AEKeyword(0x7768_793F)) != nil   // kAEQuitReason, 'why?'
         var closeFirst = false
+        if let s = model.session, s.pausing, !byTheSystem {   // Home is still pausing it (its save is on its way to the cloud): ask once it is paused
+            model.notice = LF("%@ is still pausing while its save goes to the cloud: quit again in a moment.", s.game.name)
+            return .terminateCancel
+        }
+        if byTheSystem, let s = model.session, s.paused, model.cloudConflict(s) != nil { s.killWithoutSending() }   // not let go on over the other device's save
         if let s = model.session, s.paused, s.alive, !byTheSystem {
             let conflict = model.cloudConflict(s)
             let a = NSAlert()
@@ -61,12 +66,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 a.addButton(withTitle: L("Let It Go On and Quit"))
             }
             a.addButton(withTitle: L("Cancel"))
-            switch a.runModal() {
+            let answer = a.runModal()
+            let conflictNow = model.cloudConflict(s)   // another device may have saved it while the question was up
+            switch answer {
             case .alertFirstButtonReturn:
-                guard s.paused, s.alive else { return .terminateCancel }   // it went on, or ended, while the question was up
+                guard s.paused, s.alive else { model.reopenIfClosed(); return .terminateCancel }   // it went on, or ended, while the question was up
                 model.hideInBackground(); return .terminateCancel
-            case .alertSecondButtonReturn: closeFirst = conflict != nil
-            default: return .terminateCancel
+            case .alertSecondButtonReturn:
+                if conflict == nil, let c = conflictNow { model.reopenIfClosed(); model.askCloud(c); return .terminateCancel }   // "go on" no longer fits: ask as on resume
+                closeFirst = conflict != nil
+            default: model.reopenIfClosed(); return .terminateCancel
             }
         }
         let s = model.session

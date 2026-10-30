@@ -6,6 +6,9 @@ struct UpdatesView: View {
     var showBuilds: () -> Void = {}
     @State private var picked: Set<String> = []
     @State private var filter = Filter.games
+    @State private var askKeep = false
+    @State private var keepTitle = ""
+    @State private var dropping: Commit?
 
     enum Filter: Hashable { case games, all }
 
@@ -36,7 +39,36 @@ struct UpdatesView: View {
                     InfoRow(L("Last check"), repo.lastFetch?.relative ?? L("not yet"))
                 }
                 if repo.dirty {
-                    Label("The checkout has local changes: NX Hub does not update it while they are there.", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(LF("Edited and not kept as a change of your own yet: %@. NX Hub updates once they are kept (or undone).", repo.editedFiles.joined(separator: ", ")), systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Keep as My Own Change…") { keepTitle = ""; askKeep = true }.disabled(repo.busy || model.builds.current != nil)
+                    }
+                }
+                if !repo.localCommits.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(LF("Your own changes on top of nxnative (%lld): each update puts them back on top.", repo.localCommits.count)).font(.callout.weight(.semibold))
+                        ForEach(repo.localCommits) { c in
+                            HStack(spacing: 8) {
+                                Image(systemName: "person.crop.circle.badge.checkmark").foregroundStyle(.secondary)
+                                Text(c.subject).lineLimit(2)
+                                Text(c.short).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                if repo.alsoUpstream(c) { Text("nxnative has it now").font(.caption.weight(.semibold)).foregroundStyle(.green) }
+                                Spacer()
+                                Button("Take Out…") { dropping = c }.disabled(repo.busy || model.builds.current != nil)
+                            }
+                        }
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.secondary.opacity(0.08)))
+                }
+                let crossing = repo.crossing
+                if !crossing.isEmpty {
+                    Label(LF(crossing.count == 1 ? "%lld new commit changes files of your own changes: %@. If they touch the same lines, the update stops without changing anything." : "%lld new commits change files of your own changes: %@. If they touch the same lines, the update stops without changing anything.",
+                             crossing.count, crossing.prefix(3).map { "\($0.short) \($0.subject)" }.joined(separator: "; ") + (crossing.count > 3 ? "…" : "")),
+                          systemImage: "arrow.triangle.merge")
+                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }
                 if let e = repo.error {
                     Label(e, systemImage: "xmark.octagon").foregroundStyle(.red)
@@ -58,7 +90,8 @@ struct UpdatesView: View {
                         Label(repo.incoming.isEmpty ? L("Up to Date") : LF("Update nxnative (%lld new)", repo.incoming.count), systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(repo.busy || repo.incoming.isEmpty || repo.dirty)
+                    .disabled(repo.busy || repo.incoming.isEmpty || repo.dirty || model.builds.current != nil)
+                    .help(LocalizedStringKey(model.builds.current != nil ? "A game is building with this checkout: update once it ends" : ""))
                     if repo.busy { ProgressView().controlSize(.small) }
                     Spacer()
                     if let web = repo.webBase, let u = URL(string: web + "/commits/main") {
@@ -70,6 +103,24 @@ struct UpdatesView: View {
             .padding(6)
         } label: {
             Label("Your nxnative", systemImage: "externaldrive").font(.headline)
+        }
+        .alert("Keep these edits as your own change", isPresented: $askKeep) {
+            TextField("What it does", text: $keepTitle)
+            Button("Keep") {
+                let title = keepTitle.trimmingCharacters(in: .whitespaces)
+                Task { if await repo.keepEdits(title: title.isEmpty ? L("Own change") : title) { model.notice = L("Kept: each nxnative update puts it back on top.") } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("NX Hub keeps it on its own branch of your checkout and puts it back on top of each nxnative update.")
+        }
+        .confirmationDialog(dropping.map { LF("Take out “%@”?", $0.subject) } ?? "", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } })) {
+            Button("Take Out", role: .destructive) {
+                if let c = dropping { Task { if await repo.drop(c) { model.notice = LF("“%@” is out of your nxnative. Rebuild the games to leave it out of them too.", c.subject); await model.computeChanges() } } }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(dropping.map { repo.alsoUpstream($0) ? L("nxnative has this change now, so the update brings it back from there.") : L("Your games keep it until they are rebuilt.") } ?? "")
         }
     }
 

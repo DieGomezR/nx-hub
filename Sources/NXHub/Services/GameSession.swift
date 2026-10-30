@@ -95,6 +95,10 @@ final class GameSession {
     var syncs: Bool { !syncFolder.isEmpty }
     /// Home is waiting for the game's last save to reach the cloud before pausing it
     var sendingSave = false
+    /// Home pressed and the pause not landed yet (the cloud wait, the picture): the game counts as held, as a paused one does
+    var pausing = false
+    /// When NX Hub began following this run (save-sync work older than that is a previous run's leftover)
+    let since = Date()
     /// A commit is waiting for the burst to end (the session's end backs it up anyway)
     var savePending: Bool { burstFrom != nil }
     @ObservationIgnored private var shooting = false
@@ -196,8 +200,26 @@ final class GameSession {
         }
     }
 
-    /// nxnative's sender is sending the save now: it works in <save>.sync-tmp/out and removes it however the send ends (save_sync.c send_save)
-    var sendInFlight: Bool { saveFolders.first.map { Paths.exists(URL(fileURLWithPath: $0.path + ".sync-tmp/out")) } ?? false }
+    /// nxnative is syncing the save now, since when: its first save mount fetches the cloud's copy into <save>.sync-tmp, and a send works in
+    /// <save>.sync-tmp/out; both remove it however they end (save_sync.c mount_once, send_save). A folder from before this run is a leftover (a killed run)
+    var syncBusySince: Date? {
+        guard let save = saveFolders.first else { return nil }
+        let tmp = URL(fileURLWithPath: save.path + ".sync-tmp"), out = tmp.appendingPathComponent("out")
+        if let m = Paths.modified(out), m > since.addingTimeInterval(-2) { return Paths.created(out) ?? m }   // a send
+        // the first mount's fetch, until the game has its save (a fetch that came too late can leave the folder behind: not counted after that)
+        if !saveArmed, let m = Paths.modified(tmp), m > since.addingTimeInterval(-2) { return Paths.created(tmp) ?? m }
+        return nil
+    }
+
+    /// Where the pause time is kept while the host is stopped ("<host pid> <seconds since 1970>"), so an NX Hub started again knows it (adoptStopped)
+    static func pauseFile(_ titleID: String) -> URL { ctlFile(titleID).deletingPathExtension().appendingPathExtension("paused") }
+    /// The pause time a previous NX Hub kept for this stopped host
+    static func keptPause(_ titleID: String, host: pid_t) -> Date? {
+        guard let t = try? String(contentsOf: pauseFile(titleID), encoding: .utf8) else { return nil }
+        let f = t.split(separator: " ").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard f.count == 2, pid_t(f[0]) == host, let s = Double(f[1]) else { return nil }
+        return Date(timeIntervalSince1970: s)
+    }
 
 
     /// The session is over for NX Hub. A paused game goes on, unless it is kept at its instant (NX Hub quits and the player keeps it suspended)
@@ -209,7 +231,7 @@ final class GameSession {
         onFirst = nil; onSaved = nil
         sendingSave = false
         if paused, hostPID > 0, !keepPaused { kill(hostPID, SIGCONT) }
-        if !keepPaused { paused = false; suspended = false; pausedSince = nil }
+        if !keepPaused { paused = false; suspended = false; pausedSince = nil; pausing = false; try? FileManager.default.removeItem(at: GameSession.pauseFile(game.titleID)) }
     }
 
     /// Asks the host for a picture of its next frame and waits until it is written whole; it replaces last.png
@@ -254,6 +276,8 @@ final class GameSession {
         guard hostPID > 0, !paused, kill(hostPID, SIGSTOP) == 0 else { return }
         paused = true
         pausedSince = Date()
+        try? FileManager.default.createDirectory(at: GameSession.pauseFile(game.titleID).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? "\(hostPID) \(pausedSince!.timeIntervalSince1970)".write(to: GameSession.pauseFile(game.titleID), atomically: true, encoding: .utf8)
         DevLog.write("session \(game.titleID): host \(hostPID) stopped")
     }
 
@@ -262,6 +286,7 @@ final class GameSession {
         if paused { DevLog.write("session \(game.titleID): host \(hostPID) goes on") }
         paused = false
         pausedSince = nil
+        try? FileManager.default.removeItem(at: GameSession.pauseFile(game.titleID))
     }
 
     /// Back to the game: it goes on and its window comes to the front (NX Hub, the active app, hands activation over: macOS 14's cooperative activation)
@@ -294,14 +319,20 @@ final class GameSession {
     /// and keeps the newer, with the other among the saves a sync replaced (save_sync.c ss_decide)
     func closeWithoutSending() async {
         await findProcesses()
-        if launcherPID > 0 { kill(launcherPID, SIGKILL) }
-        if hostPID > 0 { kill(hostPID, SIGKILL) }
-        DevLog.write("session \(game.titleID): closed while paused, without sending its save (launcher \(launcherPID), host \(hostPID))")
-        paused = false; suspended = false; pausedSince = nil
+        killWithoutSending()
         for _ in 0..<30 {
             if !alive { return }
             try? await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    /// The same at once, for a moment that cannot wait (the Mac logging out or shutting down)
+    func killWithoutSending() {
+        if launcherPID > 0 { kill(launcherPID, SIGKILL) }
+        if hostPID > 0 { kill(hostPID, SIGKILL) }
+        DevLog.write("session \(game.titleID): closed while paused, without sending its save (launcher \(launcherPID), host \(hostPID))")
+        paused = false; suspended = false; pausing = false; pausedSince = nil
+        try? FileManager.default.removeItem(at: GameSession.pauseFile(game.titleID))
     }
 
     /// Hosts stopped by a pause that a previous NX Hub left behind (it quit with the game kept suspended, or crashed during a pause)

@@ -24,6 +24,8 @@ enum Paths {
         var d: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &d) && d.boolValue
     }
+    /// When a file or folder was made (its birth time), nil when it is not there
+    static func created(_ url: URL) -> Date? { (try? FileManager.default.attributesOfItem(atPath: url.path))?[.creationDate] as? Date }
     static func modified(_ url: URL) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }

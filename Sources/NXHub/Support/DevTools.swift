@@ -54,8 +54,17 @@ enum DevSnapshot {
                     if parts.count > 2, let g = model.games.first(where: { $0.titleID == parts[2].uppercased() }) { DevLog.write("dev: build \(g.titleID)"); model.build(g) }
                     return
                 case "update":   // the nxnative checkout to origin/main (fetch, then as the Updates page's Update does)
+                    guard model.builds.current == nil else { DevLog.write("dev: update refused: a game is building"); return }
                     await model.repo.fetch(); let ok = await model.repo.update(); await model.computeChanges()
                     DevLog.write("dev: update \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
+                case "keep":     // keep <title>: the checkout's edits as a change of our own (as the Updates page's Keep as My Own Change)
+                    guard model.builds.current == nil else { DevLog.write("dev: keep refused: a game is building"); return }
+                    let ok = await model.repo.keepEdits(title: rest); await model.computeChanges()
+                    DevLog.write("dev: keep \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
+                case "drop":     // drop <hash>: one of our own changes out
+                    guard model.builds.current == nil, let c = model.repo.localCommits.first(where: { $0.hash.hasPrefix(rest) || $0.short == rest }) else { DevLog.write("dev: drop: nothing done"); return }
+                    let ok = await model.repo.drop(c); await model.computeChanges()
+                    DevLog.write("dev: drop \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
                 case "home": DevLog.write("dev: home"); await model.homePressed(); return
                 case "shot": let ok = await model.session?.shoot() ?? false; DevLog.write("dev: shot \(ok)"); return
                 case "resume": DevLog.write("dev: resume"); model.resumeGame(); return

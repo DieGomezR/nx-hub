@@ -473,7 +473,7 @@
 "It keeps running behind NX Hub: Back to the Game brings it to the front." = "Sigue corriendo detrás de NX Hub: «Volver al juego» lo trae al frente.";
 "It was saved on another device %@, while it was suspended here, so it does not go on without NX Hub. Keep it suspended to decide later, or close it: its next start brings in that save." = "Se guardó en otro dispositivo %@, mientras estaba suspendido aquí, así que no sigue sin NX Hub. Déjalo suspendido para decidir después, o ciérralo: su próximo inicio trae esa partida.";
 "NX Hub may not open iCloud Drive, so it cannot show this game's sync (System Settings › Privacy & Security › Files and Folders)" = "NX Hub no tiene permiso para abrir iCloud Drive, así que no puede mostrar la sincronización de este juego (Ajustes del Sistema › Privacidad y seguridad › Archivos y carpetas)";
-"NX Hub may not open iCloud Drive, so it cannot show when games sync: allow it in System Settings › Privacy & Security › Files and Folders. The games ask for themselves." = "NX Hub no tiene permiso para abrir iCloud Drive, así que no puede mostrar cuándo se sincronizan los juegos: permítelo en Ajustes del Sistema › Privacidad y seguridad › Archivos y carpetas. Cada juego pide su propio permiso.";
+"NX Hub may not open iCloud Drive, so it cannot show when games sync, nor warn when another device saved a game suspended here: allow it in System Settings › Privacy & Security › Files and Folders. The games ask for themselves." = "NX Hub no tiene permiso para abrir iCloud Drive, así que no puede mostrar cuándo se sincronizan los juegos ni avisar si otro dispositivo guardó un juego suspendido aquí: permítelo en Ajustes del Sistema › Privacidad y seguridad › Archivos y carpetas. Cada juego pide su propio permiso.";
 "NX Hub may not open iCloud Drive: allow it in System Settings › Privacy & Security › Files and Folders, then try again." = "NX Hub no tiene permiso para abrir iCloud Drive: permítelo en Ajustes del Sistema › Privacidad y seguridad › Archivos y carpetas, y vuelve a intentarlo.";
 "NX Hub then stays open out of sight, holding the game at this instant: open NX Hub again, or press Home on the controller, to find it there. If you let it go on, the game keeps running without NX Hub. If you close the game or restart the Mac, that instant is lost." = "NX Hub sigue abierto sin verse y mantiene el juego en este instante: abre NX Hub de nuevo, o presiona Home en el mando, para encontrarlo ahí. Si lo dejas seguir, el juego sigue sin NX Hub. Si cierras el juego o reinicias el Mac, ese instante se pierde.";
 "Restoring one of those backups (Saves) brings back that save, and its picture shows where you were as the game saved. The exact instant you left a game at is kept only while it is suspended: Home pauses it (with Pause the game while NX Hub is in front on), and it waits there until you go back, close it or restart the Mac." = "Restaurar uno de esos respaldos (Partidas) trae de vuelta esa partida, y su captura muestra dónde estabas cuando el juego guardó. El instante exacto en que dejaste un juego solo se conserva mientras está suspendido: Home lo pausa (con «Pausar el juego mientras NX Hub está al frente» activado) y ahí espera hasta que vuelvas, lo cierres o reinicies el Mac.";
@@ -482,3 +482,32 @@
 "The restored save also goes to the cloud at the game's next start; the one there is kept among the saves a sync replaced." = "La partida restaurada también se sube a la nube en el próximo inicio del juego; la que está ahí se conserva entre las partidas que reemplazó una sincronización.";
 "This folder is outside iCloud Drive: the iPhone app cannot reach it, so only games on this Mac use it." = "Esta carpeta está fuera de iCloud Drive: la app del iPhone no llega a ella, así que solo la usan los juegos de este Mac.";
 "iCloud Drive" = "iCloud Drive";
+
+/* Own changes on top of nxnative */
+"A game is building with this checkout: update once it ends" = "Un juego se está compilando con esta copia: actualiza cuando termine";
+"Could not take out “%@”: %@" = "No se pudo quitar «%@»: %@";
+"Each time a game saves while it runs from NX Hub, a backup with a picture of that moment joins its strip below (Settings › Saves). Click one to restore it, or to restore it and play." = "Cada vez que un juego guarda mientras corre desde NX Hub, se agrega a su tira de abajo un respaldo con una captura de ese momento (Ajustes › Partidas). Haz clic en uno para restaurarlo, o para restaurarlo y jugar.";
+"Edited and not kept as a change of your own yet: %@. NX Hub updates once they are kept (or undone)." = "Editado y todavía sin guardar como cambio propio: %@. NX Hub actualiza cuando se guarden como cambio (o se deshagan).";
+"Home on the controller suspends the game at its very instant: it waits here until you go back to it." = "Home en el mando suspende el juego en su instante exacto: espera aquí hasta que vuelvas a él.";
+"Keep" = "Guardar";
+"Keep as My Own Change…" = "Guardar como cambio propio…";
+"Kept: each nxnative update puts it back on top." = "Guardado: cada actualización de nxnative lo vuelve a poner encima.";
+"NX Hub keeps it on its own branch of your checkout and puts it back on top of each nxnative update." = "NX Hub lo guarda en su propia rama de tu copia y lo vuelve a poner encima en cada actualización de nxnative.";
+"Own change" = "Cambio propio";
+"Take Out" = "Quitar";
+"Take Out…" = "Quitar…";
+"Take out “%@”?" = "¿Quitar «%@»?";
+"The checkout has edits that are not kept as a change: keep or undo them first." = "La copia tiene ediciones que no están guardadas como cambio: guárdalas o deshazlas primero.";
+"The checkout is on branch %@: NX Hub keeps changes of its own only on %@. Switch branches in Terminal." = "La copia está en la rama %@: NX Hub guarda cambios propios solo en %@. Cambia de rama en Terminal.";
+"These edits are not kept as a change of your own yet, so the update would mix them up: %@. Keep them as a change (below), or undo them." = "Estas ediciones todavía no están guardadas como cambio propio, así que la actualización las mezclaría: %@. Guárdalas como cambio (abajo) o deshazlas.";
+"Your change “%@” does not fit the new nxnative (both change the same lines), so nothing was updated and the checkout is as it was. If nxnative now has that change, take it out (below) and update again." = "Tu cambio «%@» no encaja con el nxnative nuevo (los dos cambian las mismas líneas), así que no se actualizó nada y la copia quedó como estaba. Si nxnative ya trae ese cambio, quítalo (abajo) y vuelve a actualizar.";
+"Your games keep it until they are rebuilt." = "Tus juegos lo conservan hasta que se recompilen.";
+"Your own changes on top of nxnative (%lld): each update puts them back on top." = "Tus cambios propios encima de nxnative (%lld): cada actualización los vuelve a poner encima.";
+"nxnative has it now" = "nxnative ya lo trae";
+"nxnative has this change now, so the update brings it back from there." = "nxnative ya trae este cambio, así que la actualización lo trae de ahí.";
+"“%@” is out of your nxnative. Rebuild the games to leave it out of them too." = "«%@» ya no está en tu nxnative. Recompila los juegos para quitarlo también de ellos.";
+"Keep these edits as your own change" = "Guardar estas ediciones como cambio propio";
+"What it does" = "Qué hace";
+"%lld new commit changes files of your own changes: %@. If they touch the same lines, the update stops without changing anything." = "%lld novedad cambia archivos de tus cambios propios: %@. Si tocan las mismas líneas, la actualización se detiene sin cambiar nada.";
+"%lld new commits change files of your own changes: %@. If they touch the same lines, the update stops without changing anything." = "%lld novedades cambian archivos de tus cambios propios: %@. Si tocan las mismas líneas, la actualización se detiene sin cambiar nada.";
+"%@ is still pausing while its save goes to the cloud: quit again in a moment." = "%@ todavía se está pausando mientras su partida sube a la nube: vuelve a salir en un momento.";

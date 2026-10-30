@@ -124,7 +124,7 @@ private struct ClosePrompt: View {
                 Text("What you have not saved in the game is lost.").foregroundStyle(Theme.secondary)
                 HStack(spacing: 14) {
                     Button { model.closePrompt = nil } label: { Text("Cancel").frame(minWidth: 110) }.buttonStyle(GlassPill())
-                    Button { Task { await model.closeGame() } } label: { Text("Close").frame(minWidth: 110) }.buttonStyle(PrimaryPill())
+                    Button { Task { await model.closeGame(game) } } label: { Text("Close").frame(minWidth: 110) }.buttonStyle(PrimaryPill())
                 }
                 .padding(.top, 6)
                 if !model.pads.pads.isEmpty {
@@ -207,7 +207,7 @@ private struct CloudPrompt: View {
                 }
                 .padding(.top, 6)
                 if !model.pads.pads.isEmpty {
-                    HStack(spacing: 18) { Hint(glyph: "A", text: L("Close the Game")); Hint(glyph: "X", text: L("Go Back Anyway")); Hint(glyph: "B", text: L("Cancel")) }
+                    HStack(spacing: 18) { Hint(glyph: "X", text: L("Close the Game")); Hint(glyph: "A", text: L("Go Back Anyway")); Hint(glyph: "B", text: L("Cancel")) }
                 }
             }
             .padding(36)

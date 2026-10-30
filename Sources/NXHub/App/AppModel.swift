@@ -65,6 +65,9 @@ final class AppModel {
     @ObservationIgnored private var lastGameSave: [String: String] = [:]    // title ID → the signature of its last "when the game saved" backup
     /// NX Hub keeps running out of sight (no window, no Dock icon) to hold a suspended game at its instant after Quit
     var hiddenInBackground = false
+    /// iCloud Drive as NX Hub may use it (nil until looked at). Looked at off the main thread: macOS asks once whether NX Hub may open it, and the look
+    /// waits for that answer. While it is not .on, NX Hub reads nothing inside iCloud Drive from the main thread (that would freeze the window on the question)
+    var iCloud: CloudSaves.ICloudState?
     @ObservationIgnored private var hiddenAt = Date.distantPast
     /// Opens the main window again (RootView sets it): after Quit closed it, hiding left none to bring back
     @ObservationIgnored var openMainWindow: (() -> Void)?
@@ -196,7 +199,7 @@ final class AppModel {
         case (.games, .a): if let g = selectedGame { if g.app != nil { Task { await play(g) } } else { page = .game(g.titleID) } }
         case (.games, .x): if let g = selectedGame { if isRunning(g) { closePrompt = g } else { page = .game(g.titleID) } }
         case (.games, .plus): if let g = selectedGame { page = .game(g.titleID) }
-        case (.games, .y): if let g = selectedGame, g.canBuild { build(g) }
+        case (.games, .y): if let g = selectedGame { if isRunning(g) { Task { await backupNow(g) } } else if g.canBuild { build(g) } }
         case (.dock, .a): if let item = DockItem(rawValue: dockIndex) { openDock(item) }
         case (_, .minus): page = .settings
         case (.dock, .b): homeRow = .games
@@ -214,8 +217,23 @@ final class AppModel {
             DevLog.write("  \(g.titleID) \(g.name) | \(g.version ?? "-") | app \(g.app.map { Paths.pretty($0.url) } ?? "-") chain \(g.app?.chain ?? "-") commit \(g.app?.commit ?? "-") | build \(g.buildDir.map(Paths.pretty) ?? "-") | \(g.packages.count) packages | icon \(g.extractIcon != nil)")
         }
         updateRunning()
+        await refreshCloud()
         if !config.cloudSavesFolder.isEmpty { applyCloudSaves() }   // a new or rebuilt app gets the folder too
         resetSyncBases()
+    }
+
+    /// Looks at iCloud Drive off the main thread: whether it is on and, when a game syncs into it, whether NX Hub may open it (the first look makes macOS ask)
+    func refreshCloud() async {
+        let folders = [config.cloudSavesFolder] + games.map { syncFolder($0) }
+        let inside = folders.contains { !$0.isEmpty && CloudSaves.inICloudDrive($0) }
+        let state = await Task.detached(priority: .utility) { inside ? CloudSaves.access() : CloudSaves.iCloudState }.value
+        if state != iCloud { iCloud = state; DevLog.write("iCloud Drive: \(state)") }
+    }
+
+    /// The date of a game's file in its cloud folder, read only where that cannot freeze the window (outside iCloud Drive, or once NX Hub may open it)
+    func cloudDate(_ titleID: String, in folder: String) -> Date? {
+        guard !folder.isEmpty, !CloudSaves.inICloudDrive(folder) || iCloud == .on else { return nil }
+        return CloudSaves.lastSync(titleID, in: folder)
     }
 
     func computeChanges() async {
@@ -457,7 +475,7 @@ final class AppModel {
     /// Going on would send this older instant over that save at the game's next commit (save_sync.c send_save replaces a changed cloud save, keeping a copy)
     func cloudConflict(_ s: GameSession) -> CloudConflict? {
         guard s.paused, s.syncs, let since = s.pausedSince,
-              let cloud = CloudSaves.lastSync(s.game.titleID, in: s.syncFolder), cloud > since.addingTimeInterval(5) else { return nil }
+              let cloud = cloudDate(s.game.titleID, in: s.syncFolder), cloud > since.addingTimeInterval(5) else { return nil }
         return CloudConflict(game: s.game, cloud: cloud)
     }
 
@@ -599,7 +617,7 @@ final class AppModel {
 
     /// The game started saving (the first commit of a burst): the picture closest to that moment, kept for the backup made once the burst ends
     func gameSaving(_ s: GameSession) async {
-        guard config.backupOnGameSave, session === s, s.ctl != nil else { return }
+        guard config.autoBackups, session === s, s.ctl != nil else { return }
         let tid = s.game.titleID
         guard await s.shoot(timeout: 1.5) else { return }
         let p = ShotStore.folder(tid).appendingPathComponent("saving.png")
@@ -610,7 +628,7 @@ final class AppModel {
     /// The game saved (its commits ended): a backup of that save with the picture taken as it began, so the backup shows where restoring it lands. None when the
     /// save is the same as the last one; the newest config.gameSaveBackups of those stay (Settings › Saves). `flush`: the session has ended meanwhile
     func gameSaved(_ s: GameSession, flush: Bool = false) async {
-        guard config.backupOnGameSave, flush || session === s else { return }
+        guard config.autoBackups, flush || session === s else { return }
         let tid = s.game.titleID
         let shot = pendingShots.removeValue(forKey: tid)
         defer { if let shot { try? FileManager.default.removeItem(at: shot) } }
@@ -620,12 +638,24 @@ final class AppModel {
             let r = try await SaveStore.gameBackup(slot, picture: shot, previous: lastGameSave[tid])
             lastGameSave[tid] = r.signature
             guard let z = r.zip else { DevLog.write("game save \(tid): the same as the last backup"); return }
+            if config.autoBackupMinutes > 0 { SaveStore.thin(tid, label: "game", newest: z, minutes: config.autoBackupMinutes) }
             SaveStore.prune(tid, label: "game", keep: config.gameSaveBackups)
             DevLog.write("game save \(tid): backup \(z.lastPathComponent)\(shot == nil ? " (no picture)" : "")")
         } catch {
             DevLog.write("game save \(tid): backup failed: \(error.localizedDescription)")
         }
         shotStamp += 1
+    }
+
+    /// A backup the player asks for (Y on the start screen with the game open, as Saves › Back Up does), with the picture of where the game is
+    func backupNow(_ g: Game) async {
+        let slot = saveSlot(for: g)
+        guard slot.exists else { notice = LF("%@ has no save yet.", g.name); return }
+        do {
+            _ = try await SaveStore.backup(slot)
+            notice = LF("%@: backup made, with the picture of where you are (Saves).", g.name)
+            shotStamp += 1
+        } catch { notice = error.localizedDescription }
     }
 
     /// What applyCloudSaves found: games whose apps are too old for cloud saves, games whose own window chose otherwise, and whether iCloud Drive is off
@@ -639,7 +669,7 @@ final class AppModel {
     func applyCloudSaves() -> CloudReport {
         var r = CloudReport()
         var want = config.cloudSavesFolder
-        if !want.isEmpty, CloudSaves.unreachable(want) { r.iCloudOff = true; want = "" }   // iCloud Drive off: none, until it is back
+        if !want.isEmpty, CloudSaves.inICloudDrive(want), iCloud == .off { r.iCloudOff = true; want = "" }   // iCloud Drive off: none, until it is back
         var written = config.cloudSavesWritten
         for g in games {
             guard let app = g.app else { continue }

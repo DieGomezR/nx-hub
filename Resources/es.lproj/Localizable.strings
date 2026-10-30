@@ -511,3 +511,21 @@
 "%lld new commit changes files of your own changes: %@. If they touch the same lines, the update stops without changing anything." = "%lld novedad cambia archivos de tus cambios propios: %@. Si tocan las mismas líneas, la actualización se detiene sin cambiar nada.";
 "%lld new commits change files of your own changes: %@. If they touch the same lines, the update stops without changing anything." = "%lld novedades cambian archivos de tus cambios propios: %@. Si tocan las mismas líneas, la actualización se detiene sin cambiar nada.";
 "%@ is still pausing while its save goes to the cloud: quit again in a moment." = "%@ todavía se está pausando mientras su partida sube a la nube: vuelve a salir en un momento.";
+
+/* Backup frequency */
+"%@ has no save yet." = "%@ todavía no tiene partida.";
+"%@: backup made, with the picture of where you are (Saves)." = "%@: respaldo hecho, con la captura de donde vas (Partidas).";
+"Back up the save, with a picture, while you play" = "Respaldar la partida, con una captura, mientras juegas";
+"Backups are made when you choose: Back Up below, or Y on the start screen with the game open (Settings › Saves). Click one to restore it, or to restore it and play." = "Los respaldos se hacen cuando tú eliges: Respaldar abajo, o Y en la pantalla de inicio con el juego abierto (Ajustes › Partidas). Haz clic en uno para restaurarlo, o para restaurarlo y jugar.";
+"Each time the game saves" = "Cada vez que el juego guarda";
+"Every 10 minutes" = "Cada 10 minutos";
+"Every 30 minutes" = "Cada 30 minutos";
+"Every hour" = "Cada hora";
+"Only when I choose" = "Solo cuando yo elija";
+"While a game runs from NX Hub, its save is backed up with a picture of that moment, at most every %lld minutes, and always its newest save (Settings › Saves). Click one to restore it, or to restore it and play." = "Mientras un juego corre desde NX Hub, su partida se respalda con una captura de ese momento, como mucho cada %lld minutos, y siempre su partida más reciente (Ajustes › Partidas). Haz clic en uno para restaurarlo, o para restaurarlo y jugar.";
+"Back up any time with Back Up in Saves, or Y on the start screen with the game open." = "Puedes respaldar cuando quieras con Respaldar en Partidas, o con Y en la pantalla de inicio con el juego abierto.";
+"No automatic backups." = "Sin respaldos automáticos.";
+"A backup each time the game saves." = "Un respaldo cada vez que el juego guarda.";
+"When the game saves, NX Hub keeps that save with a picture: at most one backup per %lld minutes, plus always the newest save (it takes the place of the last one while that one is recent)." = "Cuando el juego guarda, NX Hub conserva esa partida con una captura: como mucho un respaldo cada %lld minutos, y siempre la partida más reciente (ocupa el lugar de la anterior mientras esa sea reciente).";
+"A backup is the game's own save: restored, the game starts from its beginning and loads it, as on a Switch, and its picture shows where you were when it saved. Only Home keeps the very instant: it suspends the game, and A or Home takes you back exactly there." = "Un respaldo es la partida del propio juego: al restaurarlo, el juego arranca desde su inicio y la carga, como en una Switch, y su captura muestra dónde estabas cuando guardó. Solo Home conserva el instante exacto: suspende el juego, y con A o Home vuelves justo ahí.";
+"The game then starts from its beginning with that save, as on a Switch: the picture shows where you were when it saved." = "Después el juego arranca desde su inicio con esa partida, como en una Switch: la captura muestra dónde estabas cuando guardó.";

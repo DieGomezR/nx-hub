@@ -11,8 +11,8 @@ struct SavesPage: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Label("Each time a game saves while it runs from NX Hub, a backup with a picture of that moment joins its strip below (Settings › Saves). Click one to restore it, or to restore it and play.", systemImage: "camera.fill")
-                        Label("Home on the controller suspends the game at its very instant: it waits here until you go back to it.", systemImage: "pause.circle.fill")
+                        Label(backupLine, systemImage: "camera.fill")
+                        Label("A backup is the game's own save: restored, the game starts from its beginning and loads it, as on a Switch, and its picture shows where you were when it saved. Only Home keeps the very instant: it suspends the game, and A or Home takes you back exactly there.", systemImage: "pause.circle.fill")
                         Label("Before NX Hub replaces or restores a save it backs up the current one. A save is replaced only while its game is closed.", systemImage: "arrow.down.doc.fill")
                     }
                     .font(.callout).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
@@ -25,7 +25,15 @@ struct SavesPage: View {
                 .frame(maxWidth: .infinity)
             }
         }
-        .task { slots = SaveStore.slots(games: model.games) }
+        .task { slots = SaveStore.slots(games: model.games); await model.refreshCloud() }
+    }
+
+    private var backupLine: String {
+        switch model.config.autoBackupMinutes {
+        case ..<0: return L("Backups are made when you choose: Back Up below, or Y on the start screen with the game open (Settings › Saves). Click one to restore it, or to restore it and play.")
+        case 0: return L("Each time a game saves while it runs from NX Hub, a backup with a picture of that moment joins its strip below (Settings › Saves). Click one to restore it, or to restore it and play.")
+        default: return LF("While a game runs from NX Hub, its save is backed up with a picture of that moment, at most every %lld minutes, and always its newest save (Settings › Saves). Click one to restore it, or to restore it and play.", model.config.autoBackupMinutes)
+        }
     }
 }
 
@@ -107,6 +115,7 @@ struct SaveCard: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text((running ? LF("%@ closes first: what it has not saved is lost. The current save is backed up before the restore.", slot.name) : L("The current save is backed up first."))
+                 + " " + L("The game then starts from its beginning with that save, as on a Switch: the picture shows where you were when it saved.")
                  + (syncs ? " " + L("The restored save also goes to the cloud at the game's next start; the one there is kept among the saves a sync replaced.") : ""))
         }
     }
@@ -229,14 +238,14 @@ private struct CloudLine: View {
 
     var body: some View {
         let folder = CloudSaves.effectiveFolder(of: app, launchEnv: model.config.launchEnvironment(slot.titleID))
-        if !folder.isEmpty && CloudSaves.unreachable(folder) {
+        if !folder.isEmpty && CloudSaves.inICloudDrive(folder) && model.iCloud == .off {
             Label("iCloud Drive is off: this game's save does not sync", systemImage: "icloud.slash").font(.system(size: 12)).foregroundStyle(Theme.warn)
-        } else if !folder.isEmpty && CloudSaves.inICloudDrive(folder) && CloudSaves.access() == .noAccess {
+        } else if !folder.isEmpty && CloudSaves.inICloudDrive(folder) && model.iCloud == .noAccess {
             Label("NX Hub may not open iCloud Drive, so it cannot show this game's sync (System Settings › Privacy & Security › Files and Folders)", systemImage: "icloud.slash")
                 .font(.system(size: 12)).foregroundStyle(Theme.secondary).help(CloudSaves.display(folder))
         } else if !folder.isEmpty {
             HStack(spacing: 8) {
-                Label(CloudSaves.lastSync(slot.titleID, in: folder).map { LF("In the cloud: synced %@", $0.relative) } ?? L("In the cloud: not synced yet (it goes a few seconds after the game saves)"),
+                Label(model.cloudDate(slot.titleID, in: folder).map { LF("In the cloud: synced %@", $0.relative) } ?? L("In the cloud: not synced yet (it goes a few seconds after the game saves)"),
                       systemImage: "icloud.fill")
                 let copies = CloudSaves.hostBackups(slot.folder)
                 if Paths.isDirectory(copies) {

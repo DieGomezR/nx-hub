@@ -34,6 +34,10 @@ final class Config {
     /// A backup of the save, with a picture of that moment, each time a game started from NX Hub saves (its host commits the save); how many of those to keep per game
     var backupOnGameSave: Bool { didSet { d.set(backupOnGameSave, forKey: "backupOnGameSave") } }
     var gameSaveBackups: Int { didSet { d.set(gameSaveBackups, forKey: "gameSaveBackups") } }
+    /// Automatic backups while a game runs, when it saves: at most one per this many minutes (the newest save always kept), 0 = each time it saves,
+    /// -1 = none (only the ones the player makes: Saves › Back Up, or Y on the start screen)
+    var autoBackupMinutes: Int { didSet { d.set(autoBackupMinutes, forKey: "autoBackupMinutes") } }
+    var autoBackups: Bool { autoBackupMinutes >= 0 }
     /// nxnative's cloud saves for every game: the folder NX Hub writes into each app's cloudSaves.folder ("" = NX Hub leaves the apps' own choice alone)
     var cloudSavesFolder: String { didSet { d.set(cloudSavesFolder, forKey: "cloudSavesFolder") } }
     /// The folder NX Hub last wrote into each app (bundle ID → folder): only those are NX Hub's to change or take out; a folder the player chose in a game's own window stays
@@ -87,6 +91,7 @@ final class Config {
         backupBeforePlay = d.bool(forKey: "backupBeforePlay")
         backupOnGameSave = d.object(forKey: "backupOnGameSave") as? Bool ?? true
         gameSaveBackups = d.object(forKey: "gameSaveBackups") as? Int ?? 20
+        autoBackupMinutes = d.object(forKey: "autoBackupMinutes") as? Int ?? (d.object(forKey: "backupOnGameSave") as? Bool == false ? -1 : 10)
         cloudSavesFolder = d.string(forKey: "cloudSavesFolder") ?? ""
         cloudSavesWritten = d.dictionary(forKey: "cloudSavesWritten") as? [String: String] ?? [:]
         cloudSyncResetPending = d.stringArray(forKey: "cloudSyncResetPending") ?? []

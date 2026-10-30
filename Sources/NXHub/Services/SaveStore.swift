@@ -136,6 +136,16 @@ enum SaveStore {
     }
 
     /// Keeps the newest `keep` backups made with this label (and their pictures); the others stay
+    /// At most one backup per `minutes`, and the newest save always there: the backup before `newest` goes when it came less than `minutes` after the one
+    /// before it (it only held the newest save of that stretch; now `newest` does)
+    static func thin(_ titleID: String, label: String, newest: URL, minutes: Int) {
+        let mine = listBackups(titleID).filter { describe($0).tag == label && $0 != newest }   // newest first
+        guard mine.count >= 2, let a = describe(mine[0]).date, let b = describe(mine[1]).date, a.timeIntervalSince(b) < Double(minutes) * 60 else { return }
+        try? FileManager.default.removeItem(at: mine[0])
+        let png = ShotStore.forBackup(mine[0])
+        if FileManager.default.fileExists(atPath: png.path) { try? FileManager.default.removeItem(at: png) }
+    }
+
     static func prune(_ titleID: String, label: String, keep: Int) {
         let mine = listBackups(titleID).filter { describe($0).tag == label }
         for z in mine.dropFirst(max(0, keep)) {

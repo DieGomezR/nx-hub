@@ -390,6 +390,7 @@ private struct HintsBar: View {
                 let suspended = model.session?.game.titleID == g.titleID && model.session?.suspended == true
                 Hint(glyph: "A", text: suspended ? L("Resume") : L("Show Game"))
                 Hint(glyph: "X", text: L("Close Game"))
+                Hint(glyph: "Y", text: L("Back Up"))
                 if suspended { Hint(glyph: "⌂", text: L("Back to the game")) }
                 Hint(glyph: "+", text: L("Options"))
             } else if model.homeRow == .games {

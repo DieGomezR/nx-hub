@@ -61,6 +61,10 @@ enum DevSnapshot {
                     guard model.builds.current == nil else { DevLog.write("dev: keep refused: a game is building"); return }
                     let ok = await model.repo.keepEdits(title: rest); await model.computeChanges()
                     DevLog.write("dev: keep \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
+                case "am":       // am <patch file>: a change of our own from its pull request's patch, on top of the checkout
+                    guard model.builds.current == nil else { DevLog.write("dev: am refused: a game is building"); return }
+                    let ok = await model.repo.apply(patch: URL(fileURLWithPath: (rest as NSString).expandingTildeInPath)); await model.computeChanges()
+                    DevLog.write("dev: am \(ok) \(model.repo.shortHead) \(model.repo.error ?? "")"); return
                 case "drop":     // drop <hash>: one of our own changes out
                     guard model.builds.current == nil, let c = model.repo.localCommits.first(where: { $0.hash.hasPrefix(rest) || $0.short == rest }) else { DevLog.write("dev: drop: nothing done"); return }
                     let ok = await model.repo.drop(c); await model.computeChanges()
@@ -132,5 +136,42 @@ enum DevSnapshot {
               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return nil }
         v.cacheDisplay(in: v.bounds, to: rep)
         return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// Development only: when the main thread stops answering for 8 s, macOS's `sample` records where it is, once per hang, into .dev/hang-<time>.txt
+/// (a window that froze leaves no other trace: its timers and logs stop with it)
+enum HangWatch {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var pong = Date()
+    nonisolated(unsafe) private static var activeAtPong = false
+    nonisolated(unsafe) private static var started = false
+
+    static func start() {
+        let dev = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent(".dev")
+        guard Paths.isDirectory(dev) else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard !started else { return }
+        started = true
+        Thread.detachNewThread {
+            var sampled = false, samples = 0
+            while samples < 3 {
+                DispatchQueue.main.async { let a = MainActor.assumeIsolated { NSApp.isActive }; lock.lock(); pong = Date(); activeAtPong = a; lock.unlock() }
+                Thread.sleep(forTimeInterval: 2)
+                lock.lock(); let quiet = Date().timeIntervalSince(pong), active = activeAtPong; lock.unlock()
+                // In the background macOS naps the app (App Nap, sleep), and the main thread answers late without being stuck: only a window in use counts
+                if quiet < 8 || !active { sampled = false; continue }
+                if sampled { continue }
+                sampled = true; samples += 1
+                let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+                let out = dev.appendingPathComponent("hang-\(stamp).txt")
+                DevLog.write("hang: the main thread has not answered for \(Int(quiet)) s; sampling into \(out.lastPathComponent)")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
+                p.arguments = ["\(getpid())", "3", "-file", out.path]
+                p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+                try? p.run(); p.waitUntilExit()
+            }
+        }
     }
 }

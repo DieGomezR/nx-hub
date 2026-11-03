@@ -113,6 +113,7 @@ final class AppModel {
         let stopped = await GameSession.stoppedHosts()   // a game a previous NX Hub left suspended: kept at its instant once the library says which it is
         adopting = !stopped.isEmpty
         DevSnapshot.start(model: self)
+        HangWatch.start()
         await Shell.loadUserPath()
         builds.restore(config: config)   // after the login shell's PATH: a queued build may start right away
         if config.keysPath.isEmpty, let k = config.findKeys(in: config.libraryURLs) { config.keysPath = k }
@@ -227,7 +228,11 @@ final class AppModel {
         let folders = [config.cloudSavesFolder] + games.map { syncFolder($0) }
         let inside = folders.contains { !$0.isEmpty && CloudSaves.inICloudDrive($0) }
         let state = await Task.detached(priority: .utility) { inside ? CloudSaves.access() : CloudSaves.iCloudState }.value
-        if state != iCloud { iCloud = state; DevLog.write("iCloud Drive: \(state)") }
+        if state != iCloud {
+            iCloud = state
+            var st = stat(); let e = stat(CloudSaves.iCloudDrive.path, &st) == 0 ? 0 : errno
+            DevLog.write("iCloud Drive: \(state) (stat errno \(e))")
+        }
     }
 
     /// The date of a game's file in its cloud folder, read only where that cannot freeze the window (outside iCloud Drive, or once NX Hub may open it)

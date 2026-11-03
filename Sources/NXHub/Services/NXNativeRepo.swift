@@ -144,6 +144,19 @@ final class NXNativeRepo {
         return r.ok
     }
 
+    /// Puts a change of our own, as a patch file (git format-patch), on top of the checkout: the same commit as its pull request, so an update drops it by
+    /// itself once nxnative has merged that pull request unchanged
+    func apply(patch: URL) async -> Bool {
+        busy = true; defer { busy = false }
+        await refresh()
+        if dirty { error = L("The checkout has edits that are not kept as a change: keep or undo them first."); return false }
+        guard await onLocalBranch() else { return false }
+        let r = await gitWriting(["am", "--3way", "--keep-cr", patch.path])
+        if !r.ok { _ = await gitWriting(["am", "--abort"]); error = LF("The change in %@ does not apply: %@", patch.lastPathComponent, r.message) }
+        await refresh()
+        return r.ok
+    }
+
     /// Takes one of our own changes out (nxnative has it now, or it is not wanted): the checkout goes on without it
     func drop(_ c: Commit) async -> Bool {
         busy = true; defer { busy = false }

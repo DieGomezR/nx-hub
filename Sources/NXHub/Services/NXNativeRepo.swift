@@ -208,7 +208,11 @@ final class NXNativeRepo {
             } ?? r.message
             _ = await gitWriting(["rebase", "--abort"])
             await refresh()
-            error = LF("Your change “%@” does not fit the new nxnative (both change the same lines), so nothing was updated and the checkout is as it was. If nxnative now has that change, take it out (below) and update again.", stopped)
+            // Taking it out is the way only when nxnative has merged it; otherwise the change has to be adapted, or the games rebuilt later lose it
+            let merged = localCommits.first { $0.subject == stopped }.map { alsoUpstream($0) } ?? localCommits.contains { alsoUpstream($0) }
+            error = merged
+                ? LF("Your change “%@” collides with the new nxnative, which now has its own version of it: nothing was updated. Take your change out (below) and update again.", stopped)
+                : LF("Your change “%@” collides with the new nxnative (both change the same lines): nothing was updated, and your checkout and games stay as they are. The change has to be adapted to the new nxnative first; taking it out would leave it out of every game rebuilt afterwards.", stopped)
             DevLog.write("update: rebase stopped on \(stopped); aborted")
             return false
         }

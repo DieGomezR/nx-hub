@@ -73,9 +73,15 @@ enum DevSnapshot {
                 case "shot": let ok = await model.session?.shoot() ?? false; DevLog.write("dev: shot \(ok)"); return
                 case "resume": DevLog.write("dev: resume"); model.resumeGame(); return
                 case "close": DevLog.write("dev: close"); await model.closeGame(); return
+                case "source":   // source <title ID> [checkout]: the checkout a game builds from (without one, the main checkout again)
+                    guard parts.count > 2 else { return }
+                    let id = parts[2].uppercased(), path = parts.count > 3 ? parts[3...].joined(separator: " ") : ""
+                    if path.isEmpty { model.config.sourceOverrides[id] = nil }
+                    else if NXNativeRepo.isCheckout(Paths.expand(path)) { model.config.sourceOverrides[id] = Paths.expand(path).path }
+                    DevLog.write("dev: source \(id) → \(model.config.source(for: id).path)"); return
                 case "state":
                     let s = model.session
-                    DevLog.write("dev: state active \(NSApp.isActive) front \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") session \(s?.game.titleID ?? "-") host \(s?.hostPID ?? 0) launcher \(s?.launcherPID ?? 0) suspended \(s?.suspended ?? false) paused \(s?.paused ?? false) stopped \(s.map { Proc.stopped($0.hostPID) } ?? false) page \(model.page) macos \(ProcessInfo.processInfo.operatingSystemVersionString)")
+                    DevLog.write("dev: state active \(NSApp.isActive) front \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-") session \(s?.game.titleID ?? "-") host \(s?.hostPID ?? 0) launcher \(s?.launcherPID ?? 0) suspended \(s?.suspended ?? false) paused \(s?.paused ?? false) stopped \(s.map { Proc.stopped($0.hostPID) } ?? false) page \(model.page) macos \(ProcessInfo.processInfo.operatingSystemVersionString) checkout \(model.config.nxnativeURL.path) overrides \(model.config.sourceOverrides) builds \(model.builds.jobs.filter(\.isActive).map(\.titleID))")
                     return
                 default: break
                 }

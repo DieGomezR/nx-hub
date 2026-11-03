@@ -120,7 +120,7 @@ struct UpdatesView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(dropping.map { repo.alsoUpstream($0) ? L("nxnative has this change now, so the update brings it back from there.") : L("Your games keep it until they are rebuilt.") } ?? "")
+            Text(dropping.map { repo.alsoUpstream($0) ? L("nxnative has this change now, so the update brings it back from there.") : L("nxnative does not have this change: every game rebuilt after this goes without it (the ones built before keep it).") } ?? "")
         }
     }
 

@@ -5,6 +5,8 @@
 cd "$(dirname "$0")/.."
 mkdir -p .dev
 last="$(cat .dev/request 2>/dev/null)"
+# A request written while the watcher was stopped (its status is not "ok/fail <request>") is built now
+case "$(cat .dev/status 2>/dev/null)" in "ok $last"|"fail $last") ;; *) last="" ;; esac
 echo "Waiting for build requests in $(pwd)/.dev/request (Ctrl-C to stop)"
 while true; do
     req="$(cat .dev/request 2>/dev/null)"

@@ -54,6 +54,8 @@ final class BuildJob: Identifiable {
     var detail = ""                 // "1,234 / 25,693 shaders"
     var lines: [String] = []        // the newest lines of the log (say messages and the tools' output)
     var redLine: String?            // the last error line
+    var warning: String?            // a step that finished without what it makes (stage_end warn): the build still succeeds, with this said
+    @ObservationIgnored var warnReason = false   // the [RED] line after such a step says why
     var started: Date?
     var finished: Date?
     var commit = ""                 // the checkout's commit at the start
@@ -324,13 +326,26 @@ final class BuildService {
             if let note = str("note"), !note.isEmpty { job.detail += " · " + note }
         case "stage_end":
             if let s = str("summary"), !s.isEmpty { job.append("  ✓ \(s)") }
+            // nxnative docs/frontends.md: warn is true only when a step finished without what it makes, today a pipeline archive that failed (the app is
+            // packed without one and builds the pipelines at its first start)
+            if (ev["warn"] as? Bool) == true {
+                job.warning = L("Built without its pipeline archive: the game prepares its pipelines at its first start, which takes longer.")
+                job.warnReason = true
+            }
             let st = StageTime(name: str("name") ?? job.stageName, seconds: dbl("elapsed") ?? 0, cores: job.coreN > 0 ? job.coreSum / Double(job.coreN) : nil)
             job.stages.append(st)
             DevLog.write("build \(job.titleID) step \(st.name): \(Int(st.seconds)) s, cores \(st.cores.map { String(format: "%.1f", $0) } ?? "-") of \(CPULoad.count)")
+        case "shaders_stale":   // the libraries of another chain or of other shader inputs: every shader of the game is translated and compiled again
+            let n = int("count") ?? 0
+            job.append(str("reason") == "chain" ? LF("Shaders: %lld libraries come from another version of the shader translation, so they are built again.", n)
+                                                : LF("Shaders: the game's shader inputs changed, so %lld libraries are built again.", n))
         case "say":
             let m = str("msg") ?? ""
             job.append(m)
-            if m.hasPrefix("[RED]") { job.redLine = m }
+            if m.hasPrefix("[RED]") {
+                job.redLine = m
+                if job.warnReason, let w = job.warning { job.warning = w + "\n" + m.replacingOccurrences(of: "[RED] ", with: ""); job.warnReason = false }
+            }
         default: break
         }
     }

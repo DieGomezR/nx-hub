@@ -79,7 +79,7 @@ final class AppModel {
         builds.onFinished = { [weak self] job in
             guard let self else { return }
             switch job.state {
-            case .succeeded: self.notice = LF("%@ is built.", job.name)
+            case .succeeded: self.notice = job.warning == nil ? LF("%@ is built.", job.name) : LF("%@ is built, without its pipeline archive: its first start takes longer.", job.name)
             case .failed(let m): self.notice = LF("%@: the build failed: %@", job.name, m)
             default: break
             }

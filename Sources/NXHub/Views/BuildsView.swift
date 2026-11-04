@@ -81,6 +81,9 @@ struct BuildProgressCard: View {
                 if case .failed(let m) = job.state {
                     Label(m, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
                 }
+                if job.state == .succeeded, let w = job.warning {
+                    Label(w, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
+                }
                 if !compact || job.state == .running {
                     LogView(lines: job.lines)
                         .frame(height: compact ? 120 : 260)

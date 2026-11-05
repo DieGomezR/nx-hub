@@ -58,7 +58,7 @@ NX Hub doesn't fork or patch nxnative. It drives your official checkout through 
 
 - A start screen with big tiles, the selected game's art lighting the room, a dock, the clock and your battery. It moves with the D-pad or stick, A, B, X, Y, + and −, or with the keyboard.
 - Every tile says where the game stands: ready, building (with its progress), waiting for its turn, new profile or new shaders upstream, playing, paused.
-- **The Home button works inside the game** (PS, Xbox or Pro Controller). The game pauses and NX Hub comes forward with it selected; A or Home goes back to it, X closes it after asking.
+- **The Home button works inside the game** (PS, Xbox or Pro Controller). The game is suspended at that very instant and NX Hub comes forward with it selected; A or Home takes you back to exactly that instant, X closes it after asking. Closing it, or restarting the Mac, loses the instant: the game then starts from its last save.
 - **Where you left off.** While a game started from NX Hub runs, NX Hub keeps a picture of it, every couple of minutes and whenever you press Home. You see it on the start screen, on the game's page and next to its save; each save backup keeps the picture of its moment.
 
 ### One page per game
@@ -73,12 +73,15 @@ NX Hub doesn't fork or patch nxnative. It drives your official checkout through 
 - Tells you which games are worth rebuilding: a change to the game's profile, or (if you want) a new shader translation. Any game can keep the build it has.
 - A build queue with live progress, the time of each step and the cores in use. A running build carries on if you quit NX Hub, and the queue picks up where it was when you open it again. Builds can wait for the night, and the Mac stays awake while they run.
 - Before a build starts, anything left running from an earlier build of the same game is stopped, so two builds never step on each other's files.
+- **Your own changes stay.** Edits to your checkout (a fix you're trying, a pull request not merged yet) can be kept as your own changes, on a branch of their own (`nxhub-local`) that every update puts back on top of nxnative. If an update collides with one of them, nothing changes and NX Hub tells you which; a change nxnative merges as it is drops out by itself.
+- **The Xcode nxnative tested.** When your selected Xcode has another Metal compiler than the one nxnative's shaders were tested with, NX Hub builds with the tested version if it's installed beside yours (for example `/Applications/Xcode-27.2.app`), and leaves your selection alone. If it isn't installed, the build says which one to get.
 
 ### Mods, cheats and saves
 
 - **Mods.** Add folders or zip, 7z and rar archives per game, turn them on and off, and set which one wins. Browse GameBanana for the selected game, or import what's on your Atmosphère SD card (`atmosphere/contents/<title ID>`); imported mods start turned off.
 - **Cheats.** Atmosphère-format cheat files, matched to the game's build, toggled one by one and applied while the game runs. Experimental.
-- **Saves.** Every game's save with its picture: back it up, restore a backup, or replace it with a save from another tool (the current one is backed up first). Optionally, a backup each time you play.
+- **Saves.** Every game's save with its picture: back it up (Back Up, or Y on the start screen while the game is open), restore a backup and play, or replace it with a save from another tool (the current one is backed up first). While you play, backups with a picture are made each time the game saves, at most every 10 or 30 minutes or every hour, or only when you choose. A restored backup starts the game from its beginning with that save, as on a Switch; only Home keeps the very instant.
+- **Cloud saves.** Through iCloud Drive: each game syncs its save a few seconds after saving, the newest one wins, and a save a sync replaces is kept beside it. If another device saved a game that is suspended here, NX Hub asks before it goes on.
 - **Controllers.** A tester that shows each button with the name nxnative gives it, the sticks, triggers, gyro, rumble and player order.
 
 NX Hub speaks English and Spanish and follows the Mac's language; **Settings › Interface** changes it.
@@ -133,8 +136,9 @@ The first build of a game is the long one: every shader is translated and compil
 | Play | `open <app> --args --no-launcher`, plus the launch environment |
 | Mods | `DM_ROMFS_OVERLAY`, folders whose files replace the game's RomFS files |
 | Pictures and the Home pause | `DM_CTL`, the host's control file (`shot <path>` saves the next frame); the pause stops the game's process and resumes it |
-| Builds | `scripts/build_ipa_from_nsp.py --platform mac-app --progress json` |
-| Updates | git on your checkout; `dm/games/<title ID>/` tells which commits touch a game and `dm/gfx/nvn/dmsh_chain.h` when shaders are translated differently |
+| Builds | `scripts/build_ipa_from_nsp.py --platform mac-app --progress json`, with `DEVELOPER_DIR` set to the Xcode nxnative tested when it isn't the selected one |
+| Updates | git on your checkout (your own changes on the `nxhub-local` branch, rebased onto `origin/main`); `dm/games/<title ID>/` tells which commits touch a game and `dm/gfx/nvn/dmsh_chain.h` when shaders are translated differently |
+| Cloud saves | the `cloudSaves.folder` string in each app's preferences, which the app passes to the host as `DM_SAVE_SYNC` |
 | Catalog | `dm/games/*/game.tsv` and the pictures in nxnative's docs |
 
 ## Limits worth knowing
@@ -157,6 +161,12 @@ That happens with ad-hoc signed builds: each one looks like a new app to macOS. 
 <summary>A build fails with <code>FileNotFoundError</code> in <code>dmsh_build.log</code></summary>
 
 Two builds of the same game were running in its folder at the same time, for example one left running by an older NX Hub. Each deletes the other's files. NX Hub now stops leftovers before it builds; start the build again.
+</details>
+
+<details>
+<summary>A build stops with "Metal compiler is not the one the shaders were tested with"</summary>
+
+nxnative pins the Xcode whose Metal compiler it tested the shaders with. Install that version beside your Xcode (from developer.apple.com/download/all, as `/Applications/Xcode-<version>.app`), open it once and download its Metal toolchain; NX Hub then builds with it on its own. Your selected Xcode stays as it is.
 </details>
 
 <details>
@@ -219,11 +229,11 @@ scripts/      build_app.sh (build and sign) · dev_watch.sh (rebuild on request 
 ### Qué hace
 
 - Un inicio que se maneja con el mando: los juegos en grande, A para jugar, X para cerrar el que está abierto.
-- **Botón Home (PS, Xbox) dentro del juego:** vuelves a NX Hub con el juego en pausa; A o Home lo reanuda.
+- **Botón Home (PS, Xbox) dentro del juego:** vuelves a NX Hub con el juego suspendido en ese instante; A o Home te devuelve justo ahí.
 - **Dónde quedaste:** una captura del juego que se ve en el inicio, en su página y junto a su partida.
 - Los ajustes de cada juego (gráficos, controles, rendimiento) y ajustes para todos los juegos a la vez.
-- **nxnative al día:** qué cambió para tus juegos, actualizar la copia y recompilar en cola, con el tiempo de cada paso y los núcleos que usó. También compilaciones de noche.
-- Mods (carpetas, zip/7z/rar, GameBanana o tu SD de Atmosphère), trucos en formato Atmosphère (experimental), partidas con respaldo, restauración e importación, y un probador de mandos.
+- **nxnative al día:** qué cambió para tus juegos, actualizar la copia y recompilar en cola, con el tiempo de cada paso y los núcleos que usó. También compilaciones de noche. Tus propios cambios a nxnative se mantienen encima de cada actualización, y se compila con el Xcode que nxnative probó si lo tienes instalado al lado del tuyo.
+- Mods (carpetas, zip/7z/rar, GameBanana o tu SD de Atmosphère), trucos en formato Atmosphère (experimental), partidas con respaldo (al guardar, cada 10 o 30 minutos, cada hora o cuando tú quieras), restaurar y jugar, partidas en iCloud Drive, y un probador de mandos.
 
 ### Qué necesitas
 

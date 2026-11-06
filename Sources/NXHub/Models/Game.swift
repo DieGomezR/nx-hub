@@ -26,7 +26,7 @@ struct AppBundle: Hashable {
     let bundleID: String
     let version: String?
     let commit: String?              // DMCommit: the nxnative checkout that packed it (newer apps); "+dirty" with local changes
-    let chain: String?               // the shader translation chain of its libraries (DMChain, or Resources/msl/b-<chain>)
+    let chain: String?               // the shader translation chain of its libraries (DMChain, or Resources/msl/b-<chain>.img, a folder b-<chain> before nxnative cb34473f)
     let builtAt: Date?
 
     var settingsList: URL { url.appendingPathComponent("Contents/Resources/dm/launcher.json") }
@@ -47,7 +47,7 @@ struct AppBundle: Hashable {
         commit = info["DMCommit"] as? String
         var ch = info["DMChain"] as? String
         if ch == nil, let libs = try? FileManager.default.contentsOfDirectory(atPath: url.appendingPathComponent("Contents/Resources/msl").path) {
-            ch = libs.first { $0.hasPrefix("b-") }.map { String($0.dropFirst(2)) }
+            ch = libs.first { $0.hasPrefix("b-") }.map { n in String(n.dropFirst(2).prefix { $0 != "." }) }
         }
         chain = ch
         builtAt = Paths.modified(plist)

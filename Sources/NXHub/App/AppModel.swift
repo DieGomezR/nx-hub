@@ -745,6 +745,27 @@ final class AppModel {
         NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier?.lowercased() == g.bundleID.lowercased() }?.activate()
     }
 
+    var installingPython = false
+    /// nxnative's tool packages into the Python that builds use (PythonTools); the notice says how it went
+    @discardableResult func installPythonTools() async -> Bool {
+        guard !installingPython else { return false }
+        installingPython = true; defer { installingPython = false }
+        notice = L("Installing the Python packages nxnative's tools need…")
+        let r = await PythonTools.install(python: Paths.expand(config.pythonPath), checkout: config.nxnativeURL)
+        DevLog.write("python tools: \(r.ok ? "installed" : "failed: " + r.message)")
+        notice = r.ok ? L("The Python packages nxnative's tools need are installed.") : LF("Could not install the Python packages: %@", r.message)
+        return r.ok
+    }
+    /// Then the games whose last build stopped on a missing package, in the order they were queued
+    func installPythonToolsAndRebuild() async {
+        guard await installPythonTools() else { return }
+        var last: [String: Int] = [:]
+        for (i, j) in builds.jobs.enumerated() { last[j.titleID] = i }
+        for (i, j) in builds.jobs.enumerated() where last[j.titleID] == i {
+            if case .failed(let m) = j.state, PythonTools.missing(m), let g = games.first(where: { $0.titleID == j.titleID }) { build(g) }
+        }
+    }
+
     func build(_ g: Game) {
         guard let folder = g.folder, !g.packages.isEmpty else { notice = LF("%@ has no NSP files in its folder to build from.", g.name); return }
         if isRunning(g) { notice = LF("Quit %@ before rebuilding it.", g.name); return }

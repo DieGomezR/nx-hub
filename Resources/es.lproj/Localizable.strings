@@ -537,3 +537,9 @@
 "Shaders: %lld libraries come from another version of the shader translation, so they are built again." = "Shaders: %lld bibliotecas son de otra versión de la traducción de shaders, así que se compilan de nuevo.";
 "Shaders: the game's shader inputs changed, so %lld libraries are built again." = "Shaders: cambiaron las entradas de shaders del juego, así que se compilan de nuevo %lld bibliotecas.";
 "%@ is built, without its pipeline archive: its first start takes longer." = "%@ quedó compilado, sin su archivo de pipelines: su primer arranque tardará más.";
+"Installing the Python packages nxnative's tools need…" = "Instalando los paquetes de Python que piden las herramientas de nxnative…";
+"The Python packages nxnative's tools need are installed." = "Ya están instalados los paquetes de Python que piden las herramientas de nxnative.";
+"Could not install the Python packages: %@" = "No se pudieron instalar los paquetes de Python: %@";
+"Install the Python Packages and Build Again" = "Instalar los paquetes de Python y volver a compilar";
+"%@ is missing: update nxnative first." = "Falta %@: actualiza nxnative primero.";
+"%@ has no pip, and neither ensurepip nor uv could install one." = "%@ no tiene pip, y ni ensurepip ni uv pudieron instalarlo.";

@@ -53,6 +53,9 @@ enum DevSnapshot {
                 case "build":
                     if parts.count > 2, let g = model.games.first(where: { $0.titleID == parts[2].uppercased() }) { DevLog.write("dev: build \(g.titleID)"); model.build(g) }
                     return
+                case "pip":      // nxnative's tool packages into the builds' Python (PythonTools), as the failed build's button does
+                    guard model.builds.current == nil else { DevLog.write("dev: pip refused: a game is building"); return }
+                    let ok = await model.installPythonTools(); DevLog.write("dev: pip \(ok)"); return
                 case "update":   // the nxnative checkout to origin/main (fetch, then as the Updates page's Update does)
                     guard model.builds.current == nil else { DevLog.write("dev: update refused: a game is building"); return }
                     await model.repo.fetch(); let ok = await model.repo.update(); await model.computeChanges()

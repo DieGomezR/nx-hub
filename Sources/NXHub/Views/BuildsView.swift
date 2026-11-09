@@ -80,6 +80,12 @@ struct BuildProgressCard: View {
                 }
                 if case .failed(let m) = job.state {
                     Label(m, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
+                    if PythonTools.missing(m) {   // nxnative's tools import a package the builds' Python lacks: install them all, then build the games that stopped on it again
+                        Button(model.installingPython ? L("Installing…") : L("Install the Python Packages and Build Again")) {
+                            Task { await model.installPythonToolsAndRebuild() }
+                        }
+                        .disabled(model.installingPython)
+                    }
                 }
                 if job.state == .succeeded, let w = job.warning {
                     Label(w, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
